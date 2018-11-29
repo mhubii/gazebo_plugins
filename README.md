@@ -25,7 +25,7 @@ cmake -DBUILD_VEHICLE_PLUGINS=ON ..
 make
 ```
 
-Once you have built the project, in order for Gazebo to find the generated libraries, you need add the plugin path environment variable in your `~/.bashrc` as follows
+Once you have built the project, in order for Gazebo to find the generated libraries, you need edit the plugin path environment variable in your `~/.bashrc` as follows
 
 ```
 export GAZEBO_PLUGIN_PATH=<folder to which you cloned this repository>/gazebo_plugins/build/lib:$GAZEBO_PLUGIN_PATH
