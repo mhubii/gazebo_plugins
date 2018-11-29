@@ -1,6 +1,6 @@
 # Gazebo Plugins
 
-work in progress...
+The provided gazebo plugins work complementatory to the [gazebo_models](https://github.com/mhubii/gazebo_models). They add functions like keyboard navigation and autonomous control to the models.
 
 ## Build
 
