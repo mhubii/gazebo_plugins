@@ -180,13 +180,18 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 	// Record images and states.
 	if (record_) {
 
-		std::ofstream binary(img_location_ + "/img" + ss.str() + ".raw", std::ios::out | std::ios::binary);
+		std::ofstream binary(img_location_ + "/left/img" + ss.str() + ".raw", std::ios::out | std::ios::binary);
 		binary.write((char*)msg->image()[0].data().c_str(), msg->image()[0].data().length());
+		binary.close();
+
+		binary.open(img_location_ + "/right/img" + ss.str() + ".raw", std::ios::out | std::ios::binary);
+		binary.write((char*)msg->image()[1].data().c_str(), msg->image()[1].data().length());
 		binary.close();
 
 		std::ofstream txt(txt_location_ + "/loc.txt", std::ios_base::app);
 
-		txt << ss.str();
+		txt << img_location_ + "/left/img" + ss.str() + ".raw" + ", ";
+		txt << img_location_ + "/right/img" + ss.str() + ".raw";
 		
 		for (int i = 0; i < DOF; i++) {
 

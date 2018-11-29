@@ -28,8 +28,6 @@ public:
 	void OnCameraMsg(ConstImagesStampedPtr &msg);
 	void OnCollisionMsg(ConstContactsPtr &contacts);
 
-	//void Reset();
-
 	static const uint32_t DOF = 3; // fwd/back, left/right, rotation_left/rotation_right
 
 private:
