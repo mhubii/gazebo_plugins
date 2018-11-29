@@ -1,9 +1,11 @@
-option(BUILD_WITH_TORCH "Whether to build with Torch. This enables autonomous navigatoin." OFF)
-
 find_package(navigation REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 include_directories(${NAVIGATION_INCLUDE_DIR})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/vehicle_plugins)
+
+add_library(gazeboVehicleManualControl SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/manual_control.cpp)
+target_link_libraries(gazeboVehicleManualControl ${GAZEBO_LIBRARIES} ${Eigen_LIBRARIES}${NAVIGATION_LIBRARIES})
 
 if (${BUILD_WITH_TORCH})
 
@@ -13,14 +15,10 @@ if (${BUILD_WITH_TORCH})
   include_directories(${Torch_INCLUDE_DIRS})
   include_directories(${OpenCV_INCLUDE_DIRS})
 
-  list(APPEND VEHICLE_PLUGIN_SRCS 
-  list(APPEND VEHICLE_PLUGIN_LIBRARIES ${Torch_LIBRARIES} ${OpenCV_LIBRARIES})
+  add_library(gazeboVehicleAutonomousControl SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/vehicle_plugin.cpp)
+  target_link_libraries(gazeboVehicleAutonomousControl ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})
 
 endif ()
 
 
 
-
-
-add_library(gazeboVehiclePlugin SHARED ${CMAKE_CURRENT_SOURCE_DIR}/vehicle_plugin.cpp)
-target_link_libraries(gazeboVehiclePlugin ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})

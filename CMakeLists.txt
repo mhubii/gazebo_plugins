@@ -15,6 +15,7 @@ include_directories(${GAZEBO_INCLUDE_DIRS})
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 option(BUILD_VEHICLE_PLUGINS "Build plugins for vehicle." OFF)
+option(BUILD_WITH_TORCH "Whether to build with Torch." OFF)
 
 if (${BUILD_VEHICLE_PLUGINS})
 
