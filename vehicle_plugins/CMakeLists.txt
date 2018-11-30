@@ -5,7 +5,7 @@ include_directories(${NAVIGATION_INCLUDE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/vehicle_plugins)
 
 add_library(gazeboVehicleManualControl SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/manual_control.cpp)
-target_link_libraries(gazeboVehicleManualControl ${GAZEBO_LIBRARIES} ${Eigen_LIBRARIES}${NAVIGATION_LIBRARIES})
+target_link_libraries(gazeboVehicleManualControl ${GAZEBO_LIBRARIES} ${Eigen_LIBRARIES} ${NAVIGATION_LIBRARIES})
 
 if (${BUILD_WITH_TORCH})
 

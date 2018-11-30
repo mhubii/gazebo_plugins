@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.11 FATAL_ERROR)
 
 set(NAVIGATION_DIR $ENV{HOME}/navigation CACHE STRING "Directory of navigation.")
-#set(CMAKE_CXX_STANDARD 11)
 
 project(gazebo_plugins)
 

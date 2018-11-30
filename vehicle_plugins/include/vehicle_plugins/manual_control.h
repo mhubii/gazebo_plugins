@@ -10,7 +10,6 @@
 #include <iterator>
 #include <ctime>
 #include <chrono>
-#include <Eigen/Core>
 
 #include "navigation.h"
 
@@ -35,6 +34,9 @@ private:
 	// Joint velocity control.
 	double vel_[DOF];
 
+	// Reload if goal was hit.
+	bool reload_;
+
 	// Record events to location with time stamp.
 	bool record_;
 	std::string img_location_;
@@ -50,9 +52,11 @@ private:
 	void UpdateJoints();
 
 	// Members.
-	physics::ModelPtr model;
+	physics::ModelPtr model_;
 
-	event::ConnectionPtr update_connection;	
+	ignition::math::Pose3d init_pose_;
+
+	event::ConnectionPtr update_connection_;	
 
 	std::vector<physics::JointPtr> joints_;
 

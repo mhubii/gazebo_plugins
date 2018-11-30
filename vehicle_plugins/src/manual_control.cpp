@@ -12,9 +12,9 @@
 #define VELOCITY_MIN -10.0f
 #define VELOCITY_MAX  10.0f
 
-#define WORLD_NAME "default" // To change later.
+#define WORLD_NAME "vehicle_world"
 #define VEHICLE_NAME "vehicle"
-#define GOAL_NAME "goal"
+#define GOAL_COLLISION "goal::goal::goal_collision"
 #define COLLISION_FILTER "ground_plane::link::collision"
 
 namespace gazebo
@@ -24,6 +24,8 @@ VehiclePlugin::VehiclePlugin() :
 	ModelPlugin(), multi_camera_node_(new gazebo::transport::Node()), collision_node_(new gazebo::transport::Node()) {
 
 	vel_delta_ = 1e-3;
+
+	reload_ = false;
 
 	for (int i = 0; i < DOF; i++) {
 
@@ -48,8 +50,8 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	start_time_ = std::chrono::steady_clock::now();
 	time_stamp_ = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_);
 
-	// Store the pointer to the model.
-	this->model = parent;
+	// Store the pointer to the model_.
+	this->model_ = parent;
 
 	// Get sdf parameters.
 	if (!sdf->HasElement("record")) {
@@ -85,6 +87,9 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	ConfigureJoints(L_BACK_ROLL);
 	ConfigureJoints(R_BACK_ROLL);
 
+	// Store initial pose.
+	this->init_pose_ = model_->InitialRelativePose();
+
 	// Create a node for camera communication.
 	multi_camera_node_->Init();
 	multi_camera_sub_ = multi_camera_node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/stereo_camera/images", &VehiclePlugin::OnCameraMsg, this);
@@ -94,7 +99,7 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	collision_sub_ = collision_node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/chassis_contact", &VehiclePlugin::OnCollisionMsg, this);
 
 	// Listen to the update event. This event is broadcast every simulation iterartion.
-	this->update_connection = event::Events::ConnectWorldUpdateBegin(std::bind(&VehiclePlugin::OnUpdate, this));
+	this->update_connection_ = event::Events::ConnectWorldUpdateBegin(std::bind(&VehiclePlugin::OnUpdate, this));
 }
 
 void VehiclePlugin::OnUpdate() {
@@ -147,6 +152,23 @@ void VehiclePlugin::OnUpdate() {
 
 	// Set current time.
 	time_stamp_ = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_);
+
+	if (reload_) {
+
+		reload_ = false;
+
+		for (int i = 0; i < DOF; i++) {
+
+			vel_[i] = 0.;
+		}
+
+		model_->SetAngularVel(ignition::math::Vector3d(0., 0., 0.));
+		model_->SetLinearVel(ignition::math::Vector3d(0., 0., 0.));
+
+		// Set initial pose on goal hit.
+		model_->SetRelativePose(init_pose_);
+		
+	}
 }
 
 void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
@@ -188,7 +210,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 		binary.write((char*)msg->image()[1].data().c_str(), msg->image()[1].data().length());
 		binary.close();
 
-		std::ofstream txt(txt_location_ + "/loc.txt", std::ios_base::app);
+		std::ofstream txt(txt_location_ + "/log.txt", std::ios_base::app);
 
 		txt << img_location_ + "/left/img" + ss.str() + ".raw" + ", ";
 		txt << img_location_ + "/right/img" + ss.str() + ".raw";
@@ -210,7 +232,7 @@ void VehiclePlugin::OnCollisionMsg(ConstContactsPtr &contacts)
 			continue;
 
 		std::cout << "Collision between[" << contacts->contact(i).collision1()
-			     << "] and [" << contacts->contact(i).collision2() << "]\n";
+			      << "] and [" << contacts->contact(i).collision2() << "]\n";
 
 
 		for (unsigned int j = 0; j < contacts->contact(i).position_size(); ++j)
@@ -227,12 +249,15 @@ void VehiclePlugin::OnCollisionMsg(ConstContactsPtr &contacts)
 
 			 std::cout << "   Depth:" << contacts->contact(i).depth(j) << "\n";
 		}
+
+		reload_ = (contacts->contact(i).collision1().compare(GOAL_COLLISION) == 0||
+		           contacts->contact(i).collision2().compare(GOAL_COLLISION) == 0);
 	}
 }
 
 bool VehiclePlugin::ConfigureJoints(const char* name) {
 
-	std::vector<physics::JointPtr> joints = model->GetJoints();
+	std::vector<physics::JointPtr> joints = model_->GetJoints();
 	const size_t num_joints = joints.size();
 
 	for (int i = 0; i < num_joints; i++) {
