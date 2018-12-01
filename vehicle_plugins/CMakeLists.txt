@@ -15,7 +15,7 @@ if (${BUILD_WITH_TORCH})
   include_directories(${Torch_INCLUDE_DIRS})
   include_directories(${OpenCV_INCLUDE_DIRS})
 
-  add_library(gazeboVehicleAutonomousControl SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/vehicle_plugin.cpp)
+  add_library(gazeboVehicleAutonomousControl SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/autonomous_control.cpp)
   target_link_libraries(gazeboVehicleAutonomousControl ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})
 
 endif ()
