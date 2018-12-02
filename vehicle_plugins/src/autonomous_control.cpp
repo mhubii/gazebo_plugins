@@ -1,4 +1,5 @@
 #include "autonomous_control.h"
+#include <opencv4/opencv2/core.hpp>
 
 #define L_FRONT_PITCH "vehicle::l_front_wheel_pitch"
 #define L_FRONT_ROLL "vehicle::l_front_wheel_roll"
@@ -36,6 +37,9 @@ VehiclePlugin::VehiclePlugin() :
 
     autonomous_ = false;
     new_state_ = false;
+
+	l_img_ = torch::zeros({}, torch::kUInt8);
+	r_img_ = torch::zeros({}, torch::kUInt8);
 }
 
 void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
@@ -164,6 +168,8 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 		return;
 	}
 
+	const int l_width = msg->image()[0].width();
+	const int l_height = msg->image()[0].height();
 	const int l_size = msg->image()[0].data().size();
 	const int l_bpp = (msg->image()[0].step()/msg->image()[0].width())*8; // Bits per pixel.
 
@@ -173,6 +179,13 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 		return;
 	}
 
+	if (l_img_.sizes() != torch::IntList({1, 3, l_height, l_width})) {
+
+		l_img_.resize_({1, 3, l_height, l_width});
+	}
+
+	const int r_width = msg->image()[1].width();
+	const int r_height = msg->image()[1].height();
 	const int r_size = msg->image()[1].data().size();
 	const int r_bpp = (msg->image()[1].step()/msg->image()[0].width())*8; // Bits per pixel.
 
@@ -180,6 +193,11 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 		printf("VehicleManualControl -- expected 24 bits per pixel uchar3 image from camera, got %i\n", r_bpp);
 		return;
+	}
+
+	if (r_img_.sizes() != torch::IntList({1, 3, r_height, r_width})) {
+
+		r_img_.resize_({1, 3, r_height, r_width});
 	}
 
     // Copy image to tensor.
@@ -245,11 +263,16 @@ void VehiclePlugin::UpdateJoints() {
 
         // Create a vector of inputs.
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(l_img_);
-        inputs.push_back(r_img_);
+        inputs.push_back(l_img_.to(torch::kFloat32));
+        inputs.push_back(r_img_.to(torch::kFloat32));
 
         // Execute the model and turn its output into a tensor.
-        // at::Tensor output = module_->forward(inputs, ).toTensor();
+        torch::Tensor output = module_->forward(inputs).toTensor();
+		
+		for (int i = 0; i < DOF; i++) {
+
+			vel_[i] = *(output.data<float>() + i);
+		}
     }
     else {
 
