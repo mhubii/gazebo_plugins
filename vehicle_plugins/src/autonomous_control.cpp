@@ -204,6 +204,10 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
     std::memcpy(l_img_.data_ptr(), msg->image()[0].data().c_str(), l_size);
     std::memcpy(r_img_.data_ptr(), msg->image()[1].data().c_str(), r_size);
 
+	// Normalize.
+	l_img_ = l_img_.div(127.5).sub(1.);
+	r_img_ = r_img_.div(127.5).sub(1.);
+
     new_state_ = true;
 }
 
