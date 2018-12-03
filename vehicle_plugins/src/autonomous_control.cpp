@@ -1,5 +1,4 @@
 #include "autonomous_control.h"
-#include <opencv4/opencv2/core.hpp>
 
 #define L_FRONT_PITCH "vehicle::l_front_wheel_pitch"
 #define L_FRONT_ROLL "vehicle::l_front_wheel_roll"
@@ -181,7 +180,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 	if (l_img_.sizes() != torch::IntList({1, 3, l_height, l_width})) {
 
-		l_img_.resize_({1, 3, l_height, l_width});
+		l_img_.resize_({1, l_height, l_width, 3});
 	}
 
 	const int r_width = msg->image()[1].width();
@@ -197,16 +196,12 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 	if (r_img_.sizes() != torch::IntList({1, 3, r_height, r_width})) {
 
-		r_img_.resize_({1, 3, r_height, r_width});
+		r_img_.resize_({1, r_height, r_width, 3});
 	}
 
     // Copy image to tensor.
     std::memcpy(l_img_.data_ptr(), msg->image()[0].data().c_str(), l_size);
     std::memcpy(r_img_.data_ptr(), msg->image()[1].data().c_str(), r_size);
-
-	// Normalize.
-	l_img_ = l_img_.div(127.5).sub(1.);
-	r_img_ = r_img_.div(127.5).sub(1.);
 
     new_state_ = true;
 }
@@ -265,10 +260,10 @@ void VehiclePlugin::UpdateJoints() {
 
     if (autonomous_) {
 
-        // Create a vector of inputs.
+        // Create a vector of inputs and normalize images.
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(l_img_.to(torch::kFloat32));
-        inputs.push_back(r_img_.to(torch::kFloat32));
+        inputs.push_back(l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3));
+        inputs.push_back(r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3));
 
         // Execute the model and turn its output into a tensor.
         torch::Tensor output = module_->forward(inputs).toTensor();
