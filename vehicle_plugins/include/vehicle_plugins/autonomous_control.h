@@ -14,7 +14,7 @@
 #include <torch/torch.h>
 #include <torch/script.h>
 
-#include "navigation.h"
+#include "keyboard.h"
 
 namespace gazebo
 {

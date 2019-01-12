@@ -11,7 +11,7 @@
 #include <ctime>
 #include <chrono>
 
-#include "navigation.h"
+#include "keyboard.h"
 
 namespace gazebo
 {
