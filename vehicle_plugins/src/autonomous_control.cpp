@@ -51,16 +51,21 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
         autonomous_ = sdf->Get<bool>("autonomous");
 
-		std::string script_module_location = sdf->GetElement("autonomous")->Get<std::string>("script_module");
+		if (autonomous_) {
+		
+			std::string script_module_location = sdf->GetElement("autonomous")->Get<std::string>("script_module");
 
-		if (script_module_location.empty()) {
+			if (script_module_location.empty()) {
 
-			printf("VehicleManualControl -- please provide a script_module.");
+				printf("VehicleAutonomousControl -- please provide a script_module.");
+			}
+
+			printf("VehicleAutonomousControl -- Loading script module from %s. \n", script_module_location.c_str());
+
+			module_ = torch::jit::load(script_module_location);
+
+			printf("VehicleAutonomousControl -- successfully loaded script. \n");
 		}
-
-        module_ = torch::jit::load(script_module_location);
-
-		printf("VehicleManualControl -- successfully loaded scipt module from %s. \n", script_module_location.c_str());
 	}
 
 	// Configure the joints.
@@ -91,11 +96,28 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 void VehiclePlugin::OnUpdate() {
 
-    if (new_state_) {
-	
-        UpdateJoints();
-        new_state_ = false;
-    }
+	keyboard_->Poll();
+
+	// Change the mode to manual/autonomous control.
+	if (keyboard_->KeyDown(KEY_C)) {
+
+		for (int i = 0; i < DOF; i++) {
+
+			vel_[i] = 0;
+		}
+
+		autonomous_ = !autonomous_;
+	}
+
+	if (autonomous_ && new_state_) {
+
+		UpdateJoints();
+		new_state_ = false;
+	}
+	else if (!autonomous_) {
+
+		UpdateJoints();
+	}
 
 	for(int i = 0; i < DOF; i++) {
 		if(vel_[i] < VELOCITY_MIN)
@@ -107,7 +129,7 @@ void VehiclePlugin::OnUpdate() {
 
 	if (joints_.size() != 8) {
 		
-		printf("VehicleManualControl -- could only find %zu of 8 drive joints\n", joints_.size());
+		printf("VehicleAutonomousControl -- could only find %zu of 8 drive joints\n", joints_.size());
 		return;
 	}
 
@@ -161,49 +183,52 @@ void VehiclePlugin::OnUpdate() {
 
 void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
-	if (!msg) {
+	if (autonomous_) {
 
-		printf("VehicleManualControl -- received NULL message\n");
-		return;
+		if (!msg) {
+
+			printf("VehicleAutonomousControl -- received NULL message\n");
+			return;
+		}
+
+		const int l_width = msg->image()[0].width();
+		const int l_height = msg->image()[0].height();
+		const int l_size = msg->image()[0].data().size();
+		const int l_bpp = (msg->image()[0].step()/msg->image()[0].width())*8; // Bits per pixel.
+
+		if (l_bpp != 24) {
+
+			printf("VehicleAutonomousControl -- expected 24 bits per pixel uchar3 image from camera, got %i\n", l_bpp);
+			return;
+		}
+
+		if (l_img_.sizes() != torch::IntList({1, 3, l_height, l_width})) {
+
+			l_img_.resize_({1, l_height, l_width, 3});
+		}
+
+		const int r_width = msg->image()[1].width();
+		const int r_height = msg->image()[1].height();
+		const int r_size = msg->image()[1].data().size();
+		const int r_bpp = (msg->image()[1].step()/msg->image()[0].width())*8; // Bits per pixel.
+
+		if (r_bpp != 24) {
+
+			printf("VehicleAutonomousControl -- expected 24 bits per pixel uchar3 image from camera, got %i\n", r_bpp);
+			return;
+		}
+
+		if (r_img_.sizes() != torch::IntList({1, 3, r_height, r_width})) {
+
+			r_img_.resize_({1, r_height, r_width, 3});
+		}
+
+		// Copy image to tensor.
+		std::memcpy(l_img_.data_ptr(), msg->image()[0].data().c_str(), l_size);
+		std::memcpy(r_img_.data_ptr(), msg->image()[1].data().c_str(), r_size);
+
+		new_state_ = true;
 	}
-
-	const int l_width = msg->image()[0].width();
-	const int l_height = msg->image()[0].height();
-	const int l_size = msg->image()[0].data().size();
-	const int l_bpp = (msg->image()[0].step()/msg->image()[0].width())*8; // Bits per pixel.
-
-	if (l_bpp != 24) {
-
-		printf("VehicleManualControl -- expected 24 bits per pixel uchar3 image from camera, got %i\n", l_bpp);
-		return;
-	}
-
-	if (l_img_.sizes() != torch::IntList({1, 3, l_height, l_width})) {
-
-		l_img_.resize_({1, l_height, l_width, 3});
-	}
-
-	const int r_width = msg->image()[1].width();
-	const int r_height = msg->image()[1].height();
-	const int r_size = msg->image()[1].data().size();
-	const int r_bpp = (msg->image()[1].step()/msg->image()[0].width())*8; // Bits per pixel.
-
-	if (r_bpp != 24) {
-
-		printf("VehicleManualControl -- expected 24 bits per pixel uchar3 image from camera, got %i\n", r_bpp);
-		return;
-	}
-
-	if (r_img_.sizes() != torch::IntList({1, 3, r_height, r_width})) {
-
-		r_img_.resize_({1, r_height, r_width, 3});
-	}
-
-    // Copy image to tensor.
-    std::memcpy(l_img_.data_ptr(), msg->image()[0].data().c_str(), l_size);
-    std::memcpy(r_img_.data_ptr(), msg->image()[1].data().c_str(), r_size);
-
-    new_state_ = true;
 }
 
 void VehiclePlugin::OnCollisionMsg(ConstContactsPtr &contacts)
@@ -252,7 +277,7 @@ bool VehiclePlugin::ConfigureJoints(const char* name) {
 		}
 	}
 
-	printf("VehicleManualControl -- failed to find joint '%s'\n", name);
+	printf("VehicleAutonomousControl -- failed to find joint '%s'\n", name);
 	return false;
 }
 

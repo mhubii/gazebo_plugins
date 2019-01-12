@@ -72,8 +72,11 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 			record_ = false;
 		}
 
-		printf("VehicleManualControl -- recording images to %s. \n", img_location_.c_str());
-		printf("VehicleManualControl -- storing txt to %s. \n", txt_location_.c_str());
+		if (record_) {
+
+			printf("VehicleManualControl -- recording images to %s. \n", img_location_.c_str());
+			printf("VehicleManualControl -- storing txt to %s. \n", txt_location_.c_str());
+		}
 	}
 
 	// Configure the joints.
