@@ -4,6 +4,10 @@ set(NAVIGATION_DIR $ENV{HOME}/navigation CACHE STRING "Directory of navigation."
 
 project(gazebo_plugins)
 
+# Utilities.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils)
+
+# Plugins.
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
 
 find_package(gazebo REQUIRED)
@@ -15,6 +19,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 option(BUILD_VEHICLE_PLUGINS "Build plugins for vehicle." OFF)
 option(BUILD_WITH_TORCH "Whether to build with Torch." OFF)
+option(BUILD_WITH_ORB_SLAM2 "Whether to build with ORB SLAM2." OFF)
 
 if (${BUILD_VEHICLE_PLUGINS})
 
