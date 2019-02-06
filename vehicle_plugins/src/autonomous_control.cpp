@@ -21,7 +21,7 @@ namespace gazebo
 {
 
 VehiclePlugin::VehiclePlugin() :
-	ModelPlugin(), multi_camera_node_(new gazebo::transport::Node()), collision_node_(new gazebo::transport::Node()) {
+	ModelPlugin(), node_(new gazebo::transport::Node()) {
 
 	vel_delta_ = 1e-3;
 
@@ -31,8 +31,6 @@ VehiclePlugin::VehiclePlugin() :
 
 		vel_[i] = 0;
 	}
-
-	keyboard_ = Keyboard::Create();
 
     autonomous_ = false;
     new_state_ = false;
@@ -82,16 +80,28 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	// Store initial pose.
 	this->init_pose_ = model_->InitialRelativePose();
 
+	// Node for communication.
+	node_->Init();
+
 	// Create a node for camera communication.
-	multi_camera_node_->Init();
-	multi_camera_sub_ = multi_camera_node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/stereo_camera/images", &VehiclePlugin::OnCameraMsg, this);
+	multi_camera_sub_ = node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/stereo_camera/images", &VehiclePlugin::OnCameraMsg, this);
 	
 	// Create a node for collision detection.
-	collision_node_->Init();
-	collision_sub_ = collision_node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/chassis_contact", &VehiclePlugin::OnCollisionMsg, this);
+	collision_sub_ = node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/chassis_contact", &VehiclePlugin::OnCollisionMsg, this);
+
+	// Create a node for server communication.
+	server_pub_ = node_->Advertise<gazebo::msgs::ServerControl>("/gazebo/server/control");
 
 	// Listen to the update event. This event is broadcast every simulation iterartion.
 	this->update_connection_ = event::Events::ConnectWorldUpdateBegin(std::bind(&VehiclePlugin::OnUpdate, this));
+
+	keyboard_ = Keyboard::Create();
+
+	if (!keyboard_) {
+
+		printf("VehicleReinforcementLearning -- no keyboard for manual control, shutting down.\n");
+		Shutdown();
+	}
 }
 
 void VehiclePlugin::OnUpdate() {
@@ -177,7 +187,6 @@ void VehiclePlugin::OnUpdate() {
 
 		// Set initial pose on goal hit.
 		model_->SetRelativePose(init_pose_);
-		
 	}
 }
 
@@ -202,7 +211,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			return;
 		}
 
-		if (l_img_.sizes() != torch::IntList({1, 3, l_height, l_width})) {
+		if (l_img_.sizes() != torch::IntList({1, l_height, l_width, 3})) {
 
 			l_img_.resize_({1, l_height, l_width, 3});
 		}
@@ -218,7 +227,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			return;
 		}
 
-		if (r_img_.sizes() != torch::IntList({1, 3, r_height, r_width})) {
+		if (r_img_.sizes() != torch::IntList({1, r_height, r_width, 3})) {
 
 			r_img_.resize_({1, r_height, r_width, 3});
 		}
@@ -283,6 +292,14 @@ bool VehiclePlugin::ConfigureJoints(const char* name) {
 
 void VehiclePlugin::UpdateJoints() {
 
+	keyboard_->Poll();
+
+	if (keyboard_->KeyDown(KEY_Q)) {
+
+		printf("VehicleManualControl -- interruption after key q was pressed, shutting down.\n");	
+		Shutdown();
+	}
+
     if (autonomous_) {
 
         // Create a vector of inputs and normalize images.
@@ -299,8 +316,6 @@ void VehiclePlugin::UpdateJoints() {
 		}
     }
     else {
-
-        keyboard_->Poll();
         
         if (keyboard_->KeyDown(KEY_W)) {
             
@@ -338,5 +353,13 @@ void VehiclePlugin::UpdateJoints() {
             }
         }
     }
+}
+
+void VehiclePlugin::Shutdown() {
+
+	// Shutdown the simulation.
+	gazebo::msgs::ServerControl msg;
+	msg.set_stop(true);
+	server_pub_->Publish(msg);
 }
 } // End of namespace gazebo.

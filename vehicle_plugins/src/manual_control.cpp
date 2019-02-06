@@ -21,7 +21,7 @@ namespace gazebo
 {
 
 VehiclePlugin::VehiclePlugin() :
-	ModelPlugin(), multi_camera_node_(new gazebo::transport::Node()), collision_node_(new gazebo::transport::Node()) {
+	ModelPlugin(), node_(new gazebo::transport::Node()) {
 
 	vel_delta_ = 1e-3;
 
@@ -40,8 +40,6 @@ VehiclePlugin::VehiclePlugin() :
 	// Set the start time.
 	start_time_ = std::chrono::steady_clock::now();
 	time_stamp_ = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time_);
-
-	keyboard_ = Keyboard::Create();
 }
 
 void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
@@ -93,16 +91,28 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	// Store initial pose.
 	this->init_pose_ = model_->InitialRelativePose();
 
+	// Node for communication.
+	node_->Init();
+
 	// Create a node for camera communication.
-	multi_camera_node_->Init();
-	multi_camera_sub_ = multi_camera_node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/stereo_camera/images", &VehiclePlugin::OnCameraMsg, this);
+	multi_camera_sub_ = node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/stereo_camera/images", &VehiclePlugin::OnCameraMsg, this);
 	
 	// Create a node for collision detection.
-	collision_node_->Init();
-	collision_sub_ = collision_node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/chassis_contact", &VehiclePlugin::OnCollisionMsg, this);
+	collision_sub_ = node_->Subscribe("/gazebo/" WORLD_NAME "/" VEHICLE_NAME "/chassis/chassis_contact", &VehiclePlugin::OnCollisionMsg, this);
+
+	// Create a node for server communication.
+	server_pub_ = node_->Advertise<gazebo::msgs::ServerControl>("/gazebo/server/control");
 
 	// Listen to the update event. This event is broadcast every simulation iterartion.
 	this->update_connection_ = event::Events::ConnectWorldUpdateBegin(std::bind(&VehiclePlugin::OnUpdate, this));
+
+	keyboard_ = Keyboard::Create();
+
+	if (!keyboard_) {
+
+		printf("VehicleManualControl -- no keyboard for manual control, shutting down.\n");
+		Shutdown();
+	}
 }
 
 void VehiclePlugin::OnUpdate() {
@@ -315,7 +325,19 @@ void VehiclePlugin::UpdateJoints() {
 
 			vel_[i] = 0;
 		}
-
 	}
+	if (keyboard_->KeyDown(KEY_Q)) {
+
+		printf("VehicleManualControl -- interruption after key q was pressed, shutting down.\n");	
+		Shutdown();
+	}
+}
+
+void VehiclePlugin::Shutdown() {
+
+	// Shutdown the simulation.
+	gazebo::msgs::ServerControl msg;
+	msg.set_stop(true);
+	server_pub_->Publish(msg);
 }
 } // End of namespace gazebo.

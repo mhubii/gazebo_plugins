@@ -31,6 +31,8 @@ public:
 
 private:
 
+	void Shutdown();
+
 	// Joint velocity control.
 	double vel_[DOF];
 
@@ -60,13 +62,17 @@ private:
 
 	std::vector<physics::JointPtr> joints_;
 
+	// Node for communication.
+	gazebo::transport::NodePtr node_;
+
 	// Multi camera node and subscriber.
-	gazebo::transport::NodePtr multi_camera_node_;
 	gazebo::transport::SubscriberPtr multi_camera_sub_;
 
 	// Collision node and subscriber.
-	gazebo::transport::NodePtr collision_node_;
 	gazebo::transport::SubscriberPtr collision_sub_;
+
+	// Publisher to shutdown the simulation.
+	gazebo::transport::PublisherPtr server_pub_;
 
 	// Incremental velocity change.
 	double vel_delta_;
