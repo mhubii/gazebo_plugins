@@ -6,11 +6,11 @@
 #include <ignition/math.hh>
 #include <opencv2/opencv.hpp>
 #include <stdio.h>
-#include <vector>
+#include <vector> 
 
 #include "keyboard.h"
-#include "q_learning.h"
 #include "models.h"
+#include "ddpg_continuous_control.h"
 #include "gazebo_utils.h"
 #include <torch/torch.h>
 
@@ -28,17 +28,25 @@ public:
 	
 	void OnUpdate();
 	void OnCameraMsg(ConstImagesStampedPtr &msg);
-	void OnCollisionMsg(ConstContactsPtr &contacts);
+	void OnCollisionMsg(ConstContactsPtr &contacts); 
 
 	static const uint64_t DOF = 3; // fwd/back, left/right, rotation_left/rotation_right
 
 private:
 
+	void Shutdown();
+
 	// Joint velocity control.
 	double vel_[DOF];
 
+	// Reload if goal was hit.
+	bool reload_;
+
+	// Episodes and steps counters.
+	uint n_episodes_;
+	uint n_steps_;
+
 	// Agent.
-	bool CreateAgent();
 	bool UpdateAgent();
 
 	// Initialize joints.
@@ -48,19 +56,25 @@ private:
 	bool UpdateJoints();
 
 	// Members.
-	physics::ModelPtr model;
+	physics::ModelPtr model_;
+
+	ignition::math::Pose3d init_pose_;
 
 	event::ConnectionPtr update_connection;	
 
 	std::vector<physics::JointPtr> joints_;
 
+	// Node for communication.
+	gazebo::transport::NodePtr node_;
+
 	// Multi camera node and subscriber.
-	gazebo::transport::NodePtr multi_camera_node_;
 	gazebo::transport::SubscriberPtr multi_camera_sub_;
 
 	// Collision node and subscriber.
-	gazebo::transport::NodePtr collision_node_;
 	gazebo::transport::SubscriberPtr collision_sub_;
+
+	// Publisher to shutdown the simulation.
+	gazebo::transport::PublisherPtr server_pub_;
 
 	// Incremental velocity change.
 	double vel_delta_;
@@ -69,15 +83,13 @@ private:
 	Keyboard* keyboard_;
 
 	// Autonomous control.
+	DDPGContinuousControl* brain_;
+
     bool autonomous_;
 	bool new_state_;
 
 	torch::Tensor l_img_; 
     torch::Tensor r_img_;
-
-	// Net.
-	torch::Device device_;
-	Actor* model_;
 };
 
 // Register the plugin.
