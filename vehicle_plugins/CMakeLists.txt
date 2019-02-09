@@ -20,7 +20,7 @@ if (${BUILD_WITH_TORCH})
   target_link_libraries(gazeboVehicleReinforcementLearning ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})
 
   add_library(gazeboVehicleHybridLearning SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/hybrid_learning.cpp)
-  target_link_libraries(gazeboHybridLearning ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})
+  target_link_libraries(gazeboVehicleHybridLearning ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})
 
 else ()
 
