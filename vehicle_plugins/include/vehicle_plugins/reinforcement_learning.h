@@ -88,8 +88,21 @@ private:
     bool autonomous_;
 	bool new_state_;
 
-	torch::Tensor l_img_; 
+	// States and actions and everything.
+	torch::Tensor l_img_;
     torch::Tensor r_img_;
+
+	torch::Tensor action_;
+	torch::Tensor reward_;
+
+	// Different rewards.
+	float goal_distance_;
+	float hit_;
+
+	torch::Tensor l_img_next_;
+	torch::Tensor r_img_next_;
+
+	torch::Tensor dones_;
 };
 
 // Register the plugin.

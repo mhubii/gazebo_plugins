@@ -9,17 +9,17 @@
 #define R_BACK_PITCH "vehicle::r_back_wheel_pitch"
 #define R_BACK_ROLL "vehicle::r_back_wheel_roll"
 
-#define VELOCITY_MIN -10.0f
-#define VELOCITY_MAX  10.0f
+#define VELOCITY_MIN -5.0f
+#define VELOCITY_MAX  5.0f
 
 #define BATCH_SIZE 64
 #define BUFFER_SIZE 2560
-#define MAX_EPISODES 2
-#define MAX_STEPS 1000
+#define MAX_EPISODES 100
+#define MAX_STEPS 600
 
-#define REWARD_WIN 10
-#define REWARD_LOSS -10
-#define REWARD_TIME -0.1
+#define REWARD_WIN  1000
+#define REWARD_LOSS -1000
+#define REWARD_STEP -0.01
 
 #define WORLD_NAME "vehicle_world"
 #define VEHICLE_NAME "vehicle"
@@ -28,21 +28,6 @@
 
 namespace gazebo
 {
-
-//TMP
-struct Options {
-
-    std::string data_root{"data"};
-    int64_t batch_size{64};
-    int64_t epochs{10};
-    double lr{0.01};
-    double momentum{0.5};
-    bool no_cuda{false};
-    int64_t seed{1};
-    int64_t test_batch_size{1000};
-    int64_t log_interval{10};
-};
-
 
 VehiclePlugin::VehiclePlugin() :
 	ModelPlugin(), node_(new gazebo::transport::Node()) {
@@ -61,8 +46,20 @@ VehiclePlugin::VehiclePlugin() :
 		vel_[i] = 0.;
 	}
 
+	// States.
 	l_img_ = torch::zeros({}, torch::kUInt8);
 	r_img_ = torch::zeros({}, torch::kUInt8);
+
+	// Actions and rewards.
+	action_ = torch::zeros({1, 3}, torch::kFloat32);
+	reward_ = torch::zeros({1, 1}, torch::kFloat32);
+
+	// Next states.
+	l_img_next_ = torch::zeros({}, torch::kUInt8);
+	r_img_next_ = torch::zeros({}, torch::kUInt8);
+
+	// Dones.
+	dones_ = torch::zeros({1, 1}, torch::kInt);
 }
 
 VehiclePlugin::~VehiclePlugin() {
@@ -100,6 +97,12 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 			model_sdf = model_sdf->GetNextElement("sensor");
 		}
 	}
+
+	// Resize tensors.
+	l_img_.resize_({1, height, width, 3});
+	r_img_.resize_({1, height, width, 3});
+	l_img_next_.resize_({1, height, width, 3});
+	r_img_next_.resize_({1, height, width, 3});
 
 	printf("VehicleReinforcementLearning -- got an input image of size %dx%d.\n", (int)height, (int)width);
 
@@ -139,7 +142,7 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	if (autonomous_) {
 	
 		printf("VehicleReinforcementLearning -- creating autonomous agent...\n");
-		brain_ = new DDPGContinuousControl({3, height, width}, DOF, BATCH_SIZE, BUFFER_SIZE);
+		brain_ = new DDPGContinuousControl({3, height, width}, DOF, BATCH_SIZE, BUFFER_SIZE, torch::kCUDA);
 		printf("VehicleReinforcementLearning -- successfully initialized agent.\n");
 
 		brain_->Reset();
@@ -173,32 +176,22 @@ void VehiclePlugin::OnUpdate() {
 
 	if(!UpdateJoints()) {
 
-		printf("VehicleReinforcementLearning -- failed to update the agent");
+		printf("VehicleReinforcementLearning -- failed to update the agent.\n");
 	}
 
-	for(int i = 0; i < DOF; i++) {
-		if(vel_[i] < VELOCITY_MIN)
-			vel_[i] = VELOCITY_MIN;
+	// for(int i = 0; i < DOF; i++) {
+	// 	if(vel_[i] < VELOCITY_MIN)
+	// 		vel_[i] = VELOCITY_MIN;
 
-		if(vel_[i] > VELOCITY_MAX)
-			vel_[i] = VELOCITY_MAX;
-	}
+	// 	if(vel_[i] > VELOCITY_MAX)
+	// 		vel_[i] = VELOCITY_MAX;
+	// }
 
 	if (joints_.size() != 8) {
 		
 		printf("VehicleReinforcementLearning -- could only find %zu of 8 drive joints\n", joints_.size());
 		return;
 	}
-
-	// // tmp: get goal distance, add negative sign to it...
-	// physics::WorldPtr world = this->model_->GetWorld();
-	// physics::ModelPtr obstacle = world->ModelByName("goal");
-	
-	// ignition::math::Box obstaclebox = obstacle->BoundingBox();
-	// ignition::math::Box chassisbox = this->model_->GetLink("chassis")->BoundingBox();
-
-	// float distance = BoxDistance(chassisbox, obstaclebox);
-	// printf("distance: %f\n", distance);
 
 	// Drive forward/backward and turn.
 	joints_[0]->SetVelocity(0, vel_[0]); // left
@@ -235,6 +228,9 @@ void VehiclePlugin::OnUpdate() {
 		n_episodes_ += 1;
 		n_steps_ = 0;
 
+		// Reset rewards.
+		hit_ = 0.;
+
 		if (MAX_EPISODES <= n_episodes_) {
 
 			// Shutdown simulation.
@@ -243,7 +239,8 @@ void VehiclePlugin::OnUpdate() {
 		}
 
 		// End episode.
-		// learn, update whatever stuff... TODO
+		printf("VehicleReinforcementLearning -- resetting agent.\n");
+		brain_->Reset();
 
 		// Reset environment.
 		reload_ = false;
@@ -258,22 +255,13 @@ void VehiclePlugin::OnUpdate() {
 
 		// Set initial pose on goal hit.
 		model_->SetRelativePose(init_pose_);
-
-		if (autonomous_) {
-			
-			// Reset history. // TODO
-			
-
-			// Reset agent.
-			brain_->Reset();	
-		}	
 	}
 }
 
 void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 	n_steps_ += 1;
-	
+
 	if (MAX_STEPS <= n_steps_) {
 
 		reload_ = true;
@@ -298,9 +286,10 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			return;
 		}
 
-		if (l_img_.sizes() != torch::IntList({1, l_height, l_width, 3})) {
+		if (l_img_next_.sizes() != torch::IntList({1, l_height, l_width, 3})) {
 
-			l_img_.resize_({1, l_height, l_width, 3});
+			printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
+			l_img_next_.resize_({1, l_height, l_width, 3});
 		}
 
 		const int r_width = msg->image()[1].width();
@@ -314,16 +303,25 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			return;
 		}
 
-		if (r_img_.sizes() != torch::IntList({1, r_height, r_width, 3})) {
+		if (r_img_next_.sizes() != torch::IntList({1, r_height, r_width, 3})) {
 
-			r_img_.resize_({1, r_height, r_width, 3});
+			printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
+			r_img_next_.resize_({1, r_height, r_width, 3});
 		}
 
 		// Copy image to tensor.
-		std::memcpy(l_img_.data_ptr(), msg->image()[0].data().c_str(), l_size);
-		std::memcpy(r_img_.data_ptr(), msg->image()[1].data().c_str(), r_size);
+		std::memcpy(l_img_next_.data_ptr(), msg->image()[0].data().c_str(), l_size);
+		std::memcpy(r_img_next_.data_ptr(), msg->image()[1].data().c_str(), r_size);
 
 		new_state_ = true;
+
+		// Get the goal distance corresponding to the current state.
+		physics::ModelPtr goal = this->model_->GetWorld()->ModelByName("goal");
+		
+		ignition::math::Box goalbox = goal->BoundingBox();
+		ignition::math::Box chassisbox = this->model_->GetLink("chassis")->BoundingBox();
+
+		goal_distance_ = BoxDistance(chassisbox, goalbox);
 	}
 }
 
@@ -354,39 +352,61 @@ void VehiclePlugin::OnCollisionMsg(ConstContactsPtr &contacts) {
 		reload_ = (contacts->contact(i).collision1().compare(GOAL_COLLISION) == 0||
 		           contacts->contact(i).collision2().compare(GOAL_COLLISION) == 0);
 
-		if(autonomous_)
-		{
-			// rewardHistory += hitTarget ? REWARD_WIN : REWARD_LOSS;
+		// Set reward for hit.
+		hit_ = reload_ ? REWARD_WIN : REWARD_LOSS;
 
-			// newReward  = true;
-			// endEpisode = true; 
-		}
+		reload_ = true;
 	}
 }
 
 bool VehiclePlugin::UpdateAgent() {
 
-	// Update the agent on a new state.
-	// torch::Tensor action = brain_->Act(l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3),
-	//                                    r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), false);
+	// Set terminate state.
+	dones_[0][0] = reload_ ? 1 : 0;
 
-	// for (int i = 0; i < DOF; i++) {
+	// Set reward of performed action.
+	reward_[0][0] = -10*goal_distance_ + hit_ + n_steps_*REWARD_STEP;
+	
+	if (n_steps_ % 100 == 0) {
+			
+		std::cout << "episode: "     << n_episodes_
+				  << "    step: "    << n_steps_ 
+			      << "    action: (" << *(action_.to(torch::kCPU).data<float>() + 0)*VELOCITY_MAX << ", "
+			    					 << *(action_.to(torch::kCPU).data<float>() + 1)*VELOCITY_MAX << ", "
+			    					 << *(action_.to(torch::kCPU).data<float>() + 2)*VELOCITY_MAX << ")"
+			      << "    dones: "   << *(dones_.data<int>())
+			      << "    reward: "  << *(reward_.data<float>()) << std::endl;
+	}
+	
 
-	// 	vel_[i] = *(action.data<float>() + i);
-	// }
 
-	// choose action, store new state, append buffer, get score, determine average etc.. TODO
-	// torch::Tensor reward = torch::ones(1);
 	// Put states, actions, rewards, and everything together.
+	state bundle{l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/,
+	             r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/,
+				 action_.to(torch::kFloat32)/*action*/,
+				 reward_.to(torch::kFloat32)/*reward*/,
+				 l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/,
+				 r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/,
+				 dones_.to(torch::kFloat32)/*dones*/};
 
-	// state bundle{l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3),
-	//               r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3),
-	// 			  action,
-	// 			  reward,
-	// 			  l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3),
-	// 			  false};
+	brain_->Step(bundle);
 
-	// brain_->Step(bundle);
+	// Perform an action.
+	action_ = brain_->Act(l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3),
+	                      r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), true); // MEMORY LEAK TODO
+
+	if (action_.numel() == 0) {
+
+		return false;
+	}
+
+	for (int i = 0; i < DOF; i++) {
+
+		vel_[i] = *(action_.to(torch::kCPU).data<float>() + i)*VELOCITY_MAX;
+	}
+
+ 	l_img_ = l_img_next_;
+	r_img_ = r_img_next_;
 
 	return true;
 }
@@ -414,20 +434,14 @@ bool VehiclePlugin::UpdateJoints() {
 
 	keyboard_->Poll();
 
-	if (keyboard_->KeyDown(KEY_Q)) {
-
-		printf("VehicleManualControl -- interruption after key q was pressed, shutting down.\n");	
-		Shutdown();
-	}
-
 	if (autonomous_ && new_state_) {
 
 		// No new processed state.
 		new_state_ = false;
 
-		if (UpdateAgent()) {
+		if (!UpdateAgent()) {
 			
-			return true;
+			return false;
 		}
 	}
 
@@ -473,11 +487,9 @@ bool VehiclePlugin::UpdateJoints() {
 			printf("VehicleManualControl -- interruption after key q was pressed, shutting down.\n");	
 			Shutdown();
 		}
-
-		return true;
 	}
 
-	return false;
+	return true;
 }
 
 void VehiclePlugin::Shutdown() {
