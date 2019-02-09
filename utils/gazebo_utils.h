@@ -17,7 +17,7 @@ inline float BoxDistance(const ignition::math::Box& a, const ignition::math::Box
 		sqr_dist += d * d;
 	}
 
-	else if( b.Min().Min() > a.Max().X() ) {
+	else if( b.Min().X() > a.Max().X() ) {
 		
 		float d = b.Min().X() - a.Max().X();
 		sqr_dist += d * d;
@@ -46,7 +46,7 @@ inline float BoxDistance(const ignition::math::Box& a, const ignition::math::Box
 		float d = b.Min().Z() - a.Max().Z();
 		sqr_dist += d * d;
 	}
-	
+
 	return sqrtf(sqr_dist);
 }
 
