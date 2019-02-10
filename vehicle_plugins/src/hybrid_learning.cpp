@@ -1,4 +1,4 @@
-#include "reinforcement_learning.h"
+#include "hybrid_learning.h"
 
 #define L_FRONT_PITCH "vehicle::l_front_wheel_pitch"
 #define L_FRONT_ROLL "vehicle::l_front_wheel_roll"
@@ -11,16 +11,17 @@
 
 #define VELOCITY_MIN -5.0f
 #define VELOCITY_MAX  5.0f
-#define N_ACTIONS 6
+#define N_ACTIONS 2
 
-#define BATCH_SIZE 64
+#define BATCH_SIZE 128
 #define BUFFER_SIZE 2560
 #define MAX_EPISODES 100
 #define MAX_STEPS 600
 
 #define REWARD_WIN  1000
 #define REWARD_LOSS -1000
-#define REWARD_STEP -0.01
+#define REWARD_STEP 0.f
+#define REWARD_GOAL_FACTOR 1000.f
 
 #define WORLD_NAME "vehicle_world"
 #define VEHICLE_NAME "vehicle"
@@ -40,7 +41,8 @@ VehiclePlugin::VehiclePlugin() :
 
 	autonomous_ = false;
 	new_state_ = false;
-	vel_delta_ = 1e-3;
+	state_updated_ = true;
+	vel_delta_ = 1.;
 
 	for (int i = 0; i < DOF; i++) {
 	
@@ -55,11 +57,17 @@ VehiclePlugin::VehiclePlugin() :
 	action_ = torch::zeros({1, 1}, torch::kLong);
 	reward_ = torch::zeros({1, 1}, torch::kFloat32);
 
+	last_goal_distance_ = 0;
+	goal_distance_reward_ = 0;
+	hit_ = 0;
+
 	// Next states.
 	l_img_next_ = torch::zeros({}, torch::kUInt8);
 	r_img_next_ = torch::zeros({}, torch::kUInt8);
 
 	dones_ = torch::zeros({1, 1}, torch::kInt);
+
+
 }
 
 VehiclePlugin::~VehiclePlugin() {
@@ -142,10 +150,8 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	if (autonomous_) {
 	
 		printf("VehicleHybridLearning -- creating autonomous agent...\n");
-		brain_ = new DDPGContinuousControl({3, height, width}, N_ACTIONS, BATCH_SIZE, BUFFER_SIZE, torch::kCUDA);
+		brain_ = new QLearning(3, height, width, N_ACTIONS, BATCH_SIZE, BUFFER_SIZE, torch::kCUDA);
 		printf("VehicleHybridLearning -- successfully initialized agent.\n");
-
-		brain_->Reset();
 	}
 
 	// Node for communication.
@@ -159,6 +165,9 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 	// Create a node for server communication.
 	server_pub_ = node_->Advertise<gazebo::msgs::ServerControl>("/gazebo/server/control");
+
+	// Get current goal distance.
+	last_goal_distance_ = GetGoalDistance();
 
 	// Listen to the update event. This event is broadcast every simulation iterartion.
 	this->update_connection = event::Events::ConnectWorldUpdateBegin(std::bind(&VehiclePlugin::OnUpdate, this));
@@ -240,7 +249,6 @@ void VehiclePlugin::OnUpdate() {
 
 		// End episode.
 		printf("VehicleHybridLearning -- resetting agent.\n");
-		brain_->Reset();
 
 		// Reset environment.
 		reload_ = false;
@@ -255,73 +263,79 @@ void VehiclePlugin::OnUpdate() {
 
 		// Set initial pose on goal hit.
 		model_->SetRelativePose(init_pose_);
+
+		// Get current goal distance.
+		last_goal_distance_ = GetGoalDistance();
 	}
 }
 
 void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
-	n_steps_ += 1;
+	if (state_updated_) {
 
-	if (MAX_STEPS <= n_steps_) {
+		state_updated_ = false;
 
-		reload_ = true;
-	}
+		n_steps_ += 1;
 
-	if (autonomous_) {
+		if (MAX_STEPS <= n_steps_) {
 
-		if (!msg) {
-
-			printf("VehicleHybridLearning -- received NULL message.\n");
-			return;
+			reload_ = true;
 		}
 
-		const int l_width = msg->image()[0].width();
-		const int l_height = msg->image()[0].height();
-		const int l_size = msg->image()[0].data().size();
-		const int l_bpp = (msg->image()[0].step()/msg->image()[0].width())*8; // Bits per pixel.
+		if (autonomous_) {
 
-		if (l_bpp != 24) {
+			if (!msg) {
 
-			printf("VehicleAReinforcementLearning -- expected 24 bits per pixel uchar3 image from camera, got %i.\n", l_bpp);
-			return;
+				printf("VehicleHybridLearning -- received NULL message.\n");
+				return;
+			}
+
+			const int l_width = msg->image()[0].width();
+			const int l_height = msg->image()[0].height();
+			const int l_size = msg->image()[0].data().size();
+			const int l_bpp = (msg->image()[0].step()/msg->image()[0].width())*8; // Bits per pixel.
+
+			if (l_bpp != 24) {
+
+				printf("VehicleAReinforcementLearning -- expected 24 bits per pixel uchar3 image from camera, got %i.\n", l_bpp);
+				return;
+			}
+
+			if (l_img_next_.sizes() != torch::IntList({1, l_height, l_width, 3})) {
+
+				printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
+				l_img_next_.resize_({1, l_height, l_width, 3});
+			}
+
+			const int r_width = msg->image()[1].width();
+			const int r_height = msg->image()[1].height();
+			const int r_size = msg->image()[1].data().size();
+			const int r_bpp = (msg->image()[1].step()/msg->image()[0].width())*8; // Bits per pixel.
+
+			if (r_bpp != 24) {
+
+				printf("VehicleAReinforcementLearning -- expected 24 bits per pixel uchar3 image from camera, got %i.\n", r_bpp);
+				return;
+			}
+
+			if (r_img_next_.sizes() != torch::IntList({1, r_height, r_width, 3})) {
+
+				printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
+				r_img_next_.resize_({1, r_height, r_width, 3});
+			}
+
+			// Copy image to tensor.
+			std::memcpy(l_img_next_.data_ptr(), msg->image()[0].data().c_str(), l_size);
+			std::memcpy(r_img_next_.data_ptr(), msg->image()[1].data().c_str(), r_size);
+
+			// Get the goal distance corresponding to the current state.
+			float goal_distance = GetGoalDistance();
+			goal_distance_reward_ = last_goal_distance_ - goal_distance;
+			last_goal_distance_ = goal_distance;
+			
+			// New state flag.
+			new_state_ = true;
 		}
-
-		if (l_img_next_.sizes() != torch::IntList({1, l_height, l_width, 3})) {
-
-			printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
-			l_img_next_.resize_({1, l_height, l_width, 3});
-		}
-
-		const int r_width = msg->image()[1].width();
-		const int r_height = msg->image()[1].height();
-		const int r_size = msg->image()[1].data().size();
-		const int r_bpp = (msg->image()[1].step()/msg->image()[0].width())*8; // Bits per pixel.
-
-		if (r_bpp != 24) {
-
-			printf("VehicleAReinforcementLearning -- expected 24 bits per pixel uchar3 image from camera, got %i.\n", r_bpp);
-			return;
-		}
-
-		if (r_img_next_.sizes() != torch::IntList({1, r_height, r_width, 3})) {
-
-			printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
-			r_img_next_.resize_({1, r_height, r_width, 3});
-		}
-
-		// Copy image to tensor.
-		std::memcpy(l_img_next_.data_ptr(), msg->image()[0].data().c_str(), l_size);
-		std::memcpy(r_img_next_.data_ptr(), msg->image()[1].data().c_str(), r_size);
-
-		new_state_ = true;
-
-		// Get the goal distance corresponding to the current state.
-		physics::ModelPtr goal = this->model_->GetWorld()->ModelByName("goal");
-		
-		ignition::math::Box goalbox = goal->BoundingBox();
-		ignition::math::Box chassisbox = this->model_->GetLink("chassis")->BoundingBox();
-
-		goal_distance_ = BoxDistance(chassisbox, goalbox);
 	}
 }
 
@@ -359,13 +373,24 @@ void VehiclePlugin::OnCollisionMsg(ConstContactsPtr &contacts) {
 	}
 }
 
+float VehiclePlugin::GetGoalDistance() {
+
+	// Get the goal distance corresponding to the current state.
+	physics::ModelPtr goal = this->model_->GetWorld()->ModelByName("goal");
+	
+	ignition::math::Box goalbox = goal->BoundingBox();
+	ignition::math::Box chassisbox = this->model_->GetLink("chassis")->BoundingBox();
+
+	return BoxDistance(chassisbox, goalbox);
+}
+
 bool VehiclePlugin::UpdateAgent() {
 
 	// Set terminate state.
 	dones_[0][0] = reload_ ? 1 : 0;
 
 	// Set reward of performed action.
-	reward_[0][0] = -10*goal_distance_ + hit_ + n_steps_*REWARD_STEP;
+	reward_[0][0] = REWARD_GOAL_FACTOR*goal_distance_reward_ + hit_;//- goal_distance_ + hit_ + n_steps_*REWARD_STEP;
 	
 	if (n_steps_ % 100 == 0) {
 			
@@ -375,17 +400,23 @@ bool VehiclePlugin::UpdateAgent() {
 			      << "    dones: "   << *(dones_.data<int>())
 			      << "    reward: "  << *(reward_.data<float>()) << std::endl;
 	}
-	
-
 
 	// Put states, actions, rewards, and everything together.
-	state bundle{l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/,
-	             r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/,
-				 action_.to(torch::kLong)/*action*/,
-				 reward_.to(torch::kFloat32)/*reward*/,
-				 l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/,
-				 r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/,
-				 dones_.to(torch::kFloat32)/*dones*/};
+	state bundle{torch::empty({l_img_.size(0), l_img_.size(3), l_img_.size(1), l_img_.size(2)}, torch::kFloat32),
+				 torch::empty({r_img_.size(0), r_img_.size(3), r_img_.size(1), r_img_.size(2)}, torch::kFloat32),
+				 torch::empty(action_.sizes(), torch::kLong),
+				 torch::empty(reward_.sizes(), torch::kFloat32),
+				 torch::empty({l_img_next_.size(0), l_img_next_.size(3), l_img_next_.size(1), l_img_next_.size(2)}, torch::kFloat32),
+				 torch::empty({r_img_next_.size(0), r_img_next_.size(3), r_img_next_.size(1), r_img_next_.size(2)}, torch::kFloat32),
+				 torch::empty(dones_.sizes(), torch::kFloat32)};
+
+	std::get<0>(bundle).copy_(l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/);
+	std::get<1>(bundle).copy_(r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/);
+	std::get<2>(bundle).copy_(action_.to(torch::kLong)/*action*/);
+	std::get<3>(bundle).copy_(reward_.to(torch::kFloat32)/*reward*/);
+	std::get<4>(bundle).copy_(l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/);
+	std::get<5>(bundle).copy_(r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/);
+	std::get<6>(bundle).copy_(dones_.to(torch::kFloat32)/*dones*/);
 
 	brain_->Step(bundle);
 
@@ -432,39 +463,42 @@ bool VehiclePlugin::UpdateJoints() {
 		// No new processed state.
 		new_state_ = false;
 
-		if (!UpdateAgent()) {
+		// State updated flag.
+		state_updated_ = UpdateAgent();
+
+		if (!state_updated_) {
 			
 			return false;
 		}
 
 		if (*(action_.data<long>()) == 0) { // W, action 0
 			
-			vel_[0] += vel_delta_;
-			vel_[1] += vel_delta_;
+			vel_[0] = vel_delta_;
+			vel_[1] = vel_delta_;
 		}
 		if (*(action_.data<long>()) ==  1) { // S, action 1
 			
-			vel_[0] -= vel_delta_;
-			vel_[1] -= vel_delta_;
+			vel_[0] = - vel_delta_;
+			vel_[1] = - vel_delta_;
 		}
-		if (*(action_.data<long>()) == 2) { // D, action 2
+		// if (*(action_.data<long>()) == 2) { // D, action 2
 			
-			vel_[0] += vel_delta_;
-			vel_[1] -= vel_delta_;
-		}
-		if (*(action_.data<long>()) == 3) { // A, action 3
+		// 	vel_[0] += vel_delta_;
+		// 	vel_[1] -= vel_delta_;
+		// }
+		// if (*(action_.data<long>()) == 3) { // A, action 3
 			
-			vel_[0] -= vel_delta_;
-			vel_[1] += vel_delta_;
-		}
-		if (*(action_.data<long>()) == 4) { // Left, action 4
+		// 	vel_[0] -= vel_delta_;
+		// 	vel_[1] += vel_delta_;
+		// }
+		// if (*(action_.data<long>()) == 4) { // Left, action 4
 			
-			vel_[2] -= vel_delta_;
-		}
-		if (*(action_.data<long>()) == 5) { // Right, action 5
+		// 	vel_[2] -= vel_delta_;
+		// }
+		// if (*(action_.data<long>()) == 5) { // Right, action 5
 			
-			vel_[2] += vel_delta_;
-		}
+		// 	vel_[2] += vel_delta_;
+		// }
 		if (keyboard_->KeyDown(KEY_E)) {
 			
 			for (int i = 0; i < DOF; i++) {
