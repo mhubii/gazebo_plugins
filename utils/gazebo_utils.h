@@ -6,9 +6,16 @@
 #include <gazebo/common/common.hh>
 
 
+inline float CenterDistance(const ignition::math::Box& a, const ignition::math::Box& b) {
+
+	// Return the distance between the centers of 2 boxes.
+	return (a.Center() - b.Center()).Length();
+}
+
+
 // Compute the distance between two bounding boxes.
-inline float BoxDistance(const ignition::math::Box& a, const ignition::math::Box& b)
-{
+inline float BoxDistance(const ignition::math::Box& a, const ignition::math::Box& b) {
+	
 	float sqr_dist = 0;
 
 	if( b.Max().X() < a.Min().X() ) {
