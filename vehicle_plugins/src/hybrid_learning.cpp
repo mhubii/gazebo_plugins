@@ -220,7 +220,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			break;
 	}
 
-	if (n_steps % 100 == 0) {
+	if (n_steps_ % 100 == 0) {
 
 		PrintStatus();
 	}
