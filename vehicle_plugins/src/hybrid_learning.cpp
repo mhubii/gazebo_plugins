@@ -11,7 +11,7 @@
 
 #define VELOCITY_MIN -5.0f
 #define VELOCITY_MAX  5.0f
-#define N_ACTIONS 4
+#define N_ACTIONS 6
 
 #define BATCH_SIZE 128
 #define BUFFER_SIZE 2560
@@ -201,19 +201,19 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 		case MAXIMUM_STEPS:
 			dones_[0][0] = 1;
-			printf("maximum steps reached\n");
+			printf("VehicleHybridLearning -- maximum steps reached.\n");
 			break;
 
 		case HIT_GOAL:
 			dones_[0][0] = 1;
 			reward_[0][0] += REWARD_WIN;
-			printf("hit goal\n");
+			printf("VehicleHybridLearning -- hit goal.\n");
 			break;
 
 		case HIT_OBSTACLE:
 			dones_[0][0] = 1;
 			reward_[0][0] += REWARD_LOSS;
-			printf("hit obstacle\n");
+			printf("VehicleHybridLearning -- hit obstacle.\n");
 			break;
 	
 		default:
@@ -503,30 +503,36 @@ void VehiclePlugin::ActionToVelocity(torch::Tensor& action, double* vel) {
 		
 		vel[0] = + vel_delta_;
 		vel[1] = + vel_delta_;
-		vel[2] = 0;
+		vel[2] = 0.;
 	}
 	if (*(action.to(torch::kCPU).data<long>()) ==  1) { // S, action 1
 		
 		vel[0] = - vel_delta_;
 		vel[1] = - vel_delta_;
-		vel[2] = 0;
+		vel[2] = 0.;
 	}
-	// if (*(action.to(torch::kCPU).data<long>()) == 2) { // D, action 2
+	if (*(action.to(torch::kCPU).data<long>()) == 2) { // D, action 2
 		
-	// 	vel[0] += vel_delta_;
-	// 	vel[1] -= vel_delta_;
-	// }
-	// if (*(action.to(torch::kCPU).data<long>()) == 3) { // A, action 3
+		vel[0] = + vel_delta_;
+		vel[1] = - vel_delta_;
+		vel[2] = 0.;
+	}
+	if (*(action.to(torch::kCPU).data<long>()) == 3) { // A, action 3
 		
-	// 	vel[0] -= vel_delta_;
-	// 	vel[1] += vel_delta_;
-	// }
+		vel[0] = - vel_delta_;
+		vel[1] = + vel_delta_;
+		vel[2] = 0.;
+	}
 	if (*(action.to(torch::kCPU).data<long>()) == 2) { // Left, action 4
-		
+				
+		vel[0] = 0.;
+		vel[1] = 0.;
 		vel[2] = - vel_delta_;
 	}
 	if (*(action.to(torch::kCPU).data<long>()) == 3) { // Right, action 5
 		
+		vel[0] = 0.;
+		vel[1] = 0.;
 		vel[2] = + vel_delta_;
 	}
 	// if (*(action.to(torch::kCPU).data<long>()) == 5) { // E, action 6
