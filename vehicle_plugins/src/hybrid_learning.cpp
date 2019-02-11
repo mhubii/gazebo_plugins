@@ -34,16 +34,17 @@ namespace gazebo
 VehiclePlugin::VehiclePlugin() :
 	ModelPlugin(), node_(new gazebo::transport::Node()) {
 
-	n_episodes_ = 0;
-	n_steps_ = 0;
-	autonomous_ = false;
-	final_state_ = NONE;
-	vel_delta_ = 1.0;
-
 	for (int i = 0; i < DOF; i++) {
 	
 		vel_[i] = 0.;
 	}
+
+	reload_ = false;
+	n_episodes_ = 0;
+	n_steps_ = 0;
+	vel_delta_ = 1.0;
+	autonomous_ = false;
+	final_state_ = NONE;
 
 	// States.
 	l_img_ = torch::zeros({}, torch::kUInt8);
@@ -286,11 +287,6 @@ void VehiclePlugin::OnCollisionMsg(ConstContactsPtr &contacts) {
 
 		final_state_ = (contacts->contact(i).collision1().compare(GOAL_COLLISION) == 0||
 						contacts->contact(i).collision2().compare(GOAL_COLLISION) == 0) ? HIT_GOAL : HIT_OBSTACLE;
-	
-		for (int i = 0; i < DOF; i++) {
-
-			vel_[i] = 0.;
-		}
 	}
 }
 
