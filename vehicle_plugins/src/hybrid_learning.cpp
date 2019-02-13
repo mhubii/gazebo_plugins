@@ -21,7 +21,7 @@
 #define REWARD_WIN  1000
 #define REWARD_LOSS -1000
 #define COST_STEP 0.01f
-#define REWARD_GOAL_FACTOR 1000.f
+#define REWARD_GOAL_FACTOR 500.f
 
 #define WORLD_NAME "vehicle_world"
 #define VEHICLE_NAME "vehicle"
@@ -39,6 +39,17 @@ VehiclePlugin::VehiclePlugin() :
 		vel_[i] = 0.;
 	}
 
+	// Optimization parameters.
+	batch_size_ = 128;
+	buffer_size_ = 2560;
+	max_episodes_ = 100;
+	max_steps_ = 600;
+
+	reward_win_ = 1000.;
+	reward_loss_ = -1000.;
+	cost_step_ = 0.01;
+	reward_goal_factor_ = 500.;
+
 	reload_ = false;
 	n_episodes_ = 0;
 	n_steps_ = 0;
@@ -53,6 +64,8 @@ VehiclePlugin::VehiclePlugin() :
 	// Actions and rewards.
 	action_ = torch::zeros({1, 1}, torch::kLong);
 	reward_ = torch::zeros({1, 1}, torch::kFloat32);
+
+	score_ = 0.;
 
 	last_goal_distance_ = 0;
 	goal_distance_reward_ = 0;
@@ -121,6 +134,17 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 			printf("VehicleHybridLearning-- please provide a mode, either train or test.");
 		}
 
+		// Optimization parameters.
+		batch_size_ = sdf->GetElement("autonomous")->Get<int>("batch_size");
+		buffer_size_ = sdf->GetElement("autonomous")->Get<int>("buffer_size");
+		max_episodes_  = sdf->GetElement("autonomous")->Get<int>("max_episodes");
+		max_steps_ = sdf->GetElement("autonomous")->Get<int>("max_steps");
+
+		reward_win_ = sdf->GetElement("autonomous")->Get<float>("reward_win");
+		reward_loss_ = sdf->GetElement("autonomous")->Get<float>("reward_loss");
+		cost_step_ = sdf->GetElement("autonomous")->Get<float>("cost_step");
+		reward_goal_factor_ = sdf->GetElement("autonomous")->Get<float>("reward_goal_factor");
+
 		if (autonomous_) {
 		
 			printf("VehicleHybridLearning -- successfully initialized reinforcement learning in %s mode. \n", mode.c_str());
@@ -145,7 +169,7 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	if (autonomous_) {
 	
 		printf("VehicleHybridLearning -- creating autonomous agent...\n");
-		brain_ = new QLearning(3, height, width, N_ACTIONS, BATCH_SIZE, BUFFER_SIZE, torch::kCUDA);
+		brain_ = new QLearning(3, height, width, N_ACTIONS, batch_size_, buffer_size_, torch::kCUDA);
 		printf("VehicleHybridLearning -- successfully initialized agent.\n");
 	}
 
@@ -182,7 +206,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 	goal_distance_reward_ = last_goal_distance_ - goal_distance;
 	last_goal_distance_ = goal_distance;
 
-	reward_[0][0] = REWARD_GOAL_FACTOR*goal_distance_reward_ - COST_STEP*n_steps_;
+	reward_[0][0] = reward_goal_factor_*goal_distance_reward_ - cost_step_*n_steps_;
 
 	if (goal_distance < 0.05) {
 
@@ -206,13 +230,13 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 		case HIT_GOAL:
 			dones_[0][0] = 1;
-			reward_[0][0] += REWARD_WIN;
+			reward_[0][0] += reward_win_;
 			printf("VehicleHybridLearning -- hit goal.\n");
 			break;
 
 		case HIT_OBSTACLE:
 			dones_[0][0] = 1;
-			reward_[0][0] += REWARD_LOSS;
+			reward_[0][0] += reward_loss_;
 			printf("VehicleHybridLearning -- hit obstacle.\n");
 			break;
 	
@@ -221,10 +245,12 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			break;
 	}
 
-	if (n_steps_ % 100 == 0) {
+	score_ += *(reward_.data<float>());
+
+	// if (n_steps_ % 100 == 0) {
 
 		PrintStatus();
-	}
+	// }
 
 	state bundle{torch::zeros({l_img_.size(0), l_img_.size(3), l_img_.size(1), l_img_.size(2)}, torch::kFloat32),
 				 torch::zeros({r_img_.size(0), r_img_.size(3), r_img_.size(1), r_img_.size(2)}, torch::kFloat32),
@@ -262,7 +288,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 		n_steps_ += 1;
 
-		if (MAX_STEPS <= n_steps_) {
+		if (max_steps_ <= n_steps_) {
 
 			final_state_ = MAXIMUM_STEPS;
 		}
@@ -319,7 +345,8 @@ void VehiclePlugin::PrintStatus() {
 			  << "    step: "    << n_steps_ 
 			  << "    action: "  << *(action_.to(torch::kCPU).data<long>())
 			  << "    dones: "   << *(dones_.data<int>())
-			  << "    reward: "  << *(reward_.data<float>()) << std::endl;
+			  << "    reward: "  << *(reward_.data<float>())
+			  << "    score:  "  << score_ << std::endl;
 }
 
 bool VehiclePlugin::UpdateAgent(){//state& some) {
@@ -328,7 +355,7 @@ bool VehiclePlugin::UpdateAgent(){//state& some) {
 	dones_[0][0] = reload_ ? 1 : 0;
 
 	// Set reward of performed action.
-	reward_[0][0] = REWARD_GOAL_FACTOR*goal_distance_reward_ + hit_ - n_steps_*COST_STEP;
+	reward_[0][0] = reward_goal_factor_*goal_distance_reward_ + hit_ - n_steps_*cost_step_;
 	
 	if (n_steps_ % 100 == 0) {
 			
@@ -629,6 +656,9 @@ void VehiclePlugin::UpdateJoints(double* vel) {
 
 void VehiclePlugin::ResetEnvironment() {
 
+	// Store the target network.
+	//if ()
+
 	n_episodes_ += 1;
 	n_steps_ = 0;
 	final_state_ = NONE;
@@ -636,7 +666,9 @@ void VehiclePlugin::ResetEnvironment() {
 	reward_[0][0] = 0.;
 	dones_[0][0] = 0;
 
-	if (MAX_EPISODES <= n_episodes_) {
+	score_ = 0.;
+
+	if (max_episodes_ <= n_episodes_) {
 
 		// Shutdown simulation.
 		printf("VehicleHybridLearning -- maximal episodes reached, shutting down.\n");
