@@ -4,11 +4,37 @@
 #include <gazebo/gazebo.hh>
 #include <gazebo/physics/physics.hh>
 #include <gazebo/common/common.hh>
+#include <Eigen/Core>
 
 
+#define PI 3.14159265358979323846
+
+std::random_device random_device;
+std::mt19937 random_radius(random_device());
+std::mt19937 random_angle(random_device());
+
+
+// Return a random variable of a uniform circular distribution. The center of the 
+// distribution is (x,y), and the radius is r.
+Eigen::Vector2d UniformCircularRandVar(float x, float y, float r) {
+
+	Eigen::Vector2d rv(0., 0.);
+
+	// Sample uniformly spherical coordinates.
+	float sph_r = std::uniform_real_distribution<float>(0., r)(random_radius);
+	float sph_a = std::uniform_real_distribution<float>(0., 2*PI)(random_angle);
+
+	// Convert to cartesian space.
+	rv(0) = sph_r*sin(sph_a) + x;
+	rv(1) = sph_r*cos(sph_a) + y;
+
+	return rv;
+}
+
+
+// Return the distance between the centers of 2 boxes.
 inline float CenterDistance(const ignition::math::Box& a, const ignition::math::Box& b) {
 
-	// Return the distance between the centers of 2 boxes.
 	return (a.Center() - b.Center()).Length();
 }
 
