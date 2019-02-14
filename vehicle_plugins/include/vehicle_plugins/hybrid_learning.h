@@ -94,9 +94,16 @@ private:
 
 	std::vector<physics::JointPtr> joints_;
 
-	// Mutex to assure that the environment is properly reset before new collisison message.
-	boost::mutex mutex_;
-	boost::condition_variable_any cond_;
+	// Optimization parameters.
+	uint batch_size_;
+	uint buffer_size_;
+	uint max_episodes_;
+	uint max_steps_;
+
+	float reward_win_;
+	float reward_loss_;
+	float cost_step_;
+	float reward_goal_factor_;
 
 	// Node for communication.
 	gazebo::transport::NodePtr node_;
@@ -125,6 +132,8 @@ private:
 
 	torch::Tensor action_;
 	torch::Tensor reward_;
+
+	float score_;
 
 	// Different rewards.
 	float last_goal_distance_;
