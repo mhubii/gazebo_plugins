@@ -116,8 +116,14 @@ private:
 	// File to track the trajectory.
 	std::ofstream out_file_vehicle_;
 	std::ofstream out_file_others_;
+	std::ofstream out_file_loss_;
 
 	std::string location_;
+
+	// Loss history of an episode.
+	torch::Tensor loss_history_;
+
+	torch::Tensor best_loss_;
 
 	// Node for communication.
 	gazebo::transport::NodePtr node_;

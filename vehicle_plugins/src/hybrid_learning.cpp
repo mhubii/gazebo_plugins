@@ -57,6 +57,8 @@ VehiclePlugin::VehiclePlugin() :
 	randomness_ = true;
 	track_ = false;
 
+	best_loss_ = torch::full({1, 1}, std::numeric_limits<float>::max()/2., torch::kFloat32);
+
 	reload_ = false;
 	n_episodes_ = 0;
 	n_steps_ = 0;
@@ -95,7 +97,8 @@ VehiclePlugin::~VehiclePlugin() {
 	if (track_) {
 
 		out_file_vehicle_.close();	
-		out_file_others_.clear();	
+		out_file_others_.close();	
+		out_file_loss_.close();
 	}
 }
 
@@ -185,6 +188,7 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 			out_file_vehicle_.open(location_ + "/vehicle_positions.csv");
 			out_file_others_.open(location_ + "/goal_obstacle_positions.csv");
+			out_file_loss_.open(location_ + "/mean_loss.csv");
 		}
 	}
 
@@ -223,6 +227,10 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	last_goal_distance_ = GetGoalDistance();
 
 	keyboard_ = Keyboard::Create();
+
+
+	// Loss history for a whole episode.
+	loss_history_ = torch::zeros({1, max_steps_}, torch::kCPU);
 
 	if (!keyboard_) {
 
@@ -317,6 +325,9 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 	// Update the agent.
 	brain_->Step(bundle);
+
+	// Record the loss.
+	loss_history_[0][n_steps_] = brain_->GetLoss().to(torch::kCPU);
 
 	if (*(dones_.data<int>()) == 1) {
 
@@ -703,8 +714,8 @@ void VehiclePlugin::UpdateJoints(double* vel) {
 
 void VehiclePlugin::ResetEnvironment() {
 
-	// Store the target network.
-	//if ()
+	// Analyze the mean loss of this episode.
+	torch::Tensor mean_loss = loss_history_.nonzero().mean();
 
 	if (track_) {
 
@@ -714,7 +725,18 @@ void VehiclePlugin::ResetEnvironment() {
 
 		out_file_others_ << pos_goal[0]     << ", " << pos_goal[1]     << ", " << pos_goal[2]     << ", "
 				         << pos_obstacle[0] << ", " << pos_obstacle[1] << ", " << pos_obstacle[2] << "\n";
+
+		// Track the mean loss.
+		out_file_loss_ << n_episodes_ << ", " << mean_loss << "\n";
+
+		// Save neural net on best mean loss.
+		if (*(mean_loss.data<float>()) < *(best_loss_.data<float>())) {
+
+			torch::save(brain_->GetTarget(), location_ + "net.pt");
+		}
 	}
+
+	loss_history_.zero_();
 
 	n_episodes_ += 1;
 	n_steps_ = 0;
