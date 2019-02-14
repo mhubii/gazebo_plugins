@@ -121,9 +121,9 @@ private:
 	std::string location_;
 
 	// Loss history of an episode.
-	torch::Tensor loss_history_;
+	std::vector<float> loss_history_;
 
-	torch::Tensor best_loss_;
+	float best_loss_;
 
 	// Node for communication.
 	gazebo::transport::NodePtr node_;

@@ -57,7 +57,7 @@ VehiclePlugin::VehiclePlugin() :
 	randomness_ = true;
 	track_ = false;
 
-	best_loss_ = torch::full({1, 1}, std::numeric_limits<float>::max()/2., torch::kFloat32);
+	best_loss_ = std::numeric_limits<float>::max()/2.;
 
 	reload_ = false;
 	n_episodes_ = 0;
@@ -228,10 +228,6 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 	keyboard_ = Keyboard::Create();
 
-
-	// Loss history for a whole episode.
-	loss_history_ = torch::zeros({1, max_steps_}, torch::kCPU);
-
 	if (!keyboard_) {
 
 		printf("VehicleHybridLearning -- no keyboard for manual control, shutting down.\n");
@@ -327,7 +323,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 	brain_->Step(bundle);
 
 	// Record the loss.
-	loss_history_[0][n_steps_] = brain_->GetLoss().to(torch::kCPU);
+	loss_history_.push_back(brain_->GetLoss());
 
 	if (*(dones_.data<int>()) == 1) {
 
@@ -399,12 +395,13 @@ float VehiclePlugin::GetObstacleDistance() {
 void VehiclePlugin::PrintStatus() {
 
 	// Prints the current status to the command line.
-	std::cout << "episode: "     << n_episodes_
-			  << "    step: "    << n_steps_ 
-			  << "    action: "  << *(action_.to(torch::kCPU).data<long>())
-			  << "    dones: "   << *(dones_.data<int>())
-			  << "    reward: "  << *(reward_.data<float>())
-			  << "    score:  "  << score_ << std::endl;
+	std::cout << "episode: "       << n_episodes_
+			  << "    step: "      << n_steps_ 
+			  << "    action: "    << *(action_.to(torch::kCPU).data<long>())
+			  << "    dones: "     << *(dones_.data<int>())
+			  << "    reward: "    << *(reward_.data<float>())
+			  << "    score: "     << score_ 
+			  << "    best loss: " << best_loss_ << std::endl;
 }
 
 bool VehiclePlugin::UpdateAgent(){//state& some) {
@@ -715,7 +712,7 @@ void VehiclePlugin::UpdateJoints(double* vel) {
 void VehiclePlugin::ResetEnvironment() {
 
 	// Analyze the mean loss of this episode.
-	torch::Tensor mean_loss = loss_history_.nonzero().mean();
+	float mean_loss = std::accumulate(loss_history_.begin(), loss_history_.end(), 0.)/loss_history_.size();
 
 	if (track_) {
 
@@ -730,13 +727,14 @@ void VehiclePlugin::ResetEnvironment() {
 		out_file_loss_ << n_episodes_ << ", " << mean_loss << "\n";
 
 		// Save neural net on best mean loss.
-		if (*(mean_loss.data<float>()) < *(best_loss_.data<float>())) {
+		if (mean_loss < best_loss_) {
 
-			torch::save(brain_->GetTarget(), location_ + "net.pt");
+			torch::save(brain_->GetTarget(), location_ + "/net.pt");
+			best_loss_ = mean_loss;
 		}
 	}
 
-	loss_history_.zero_();
+	loss_history_.clear();
 
 	n_episodes_ += 1;
 	n_steps_ = 0;
