@@ -1,5 +1,10 @@
 # Find the navigation library.
-find_path(NAVIGATION_INCLUDE_DIR keyboard.h models.h q_learning.h ${NAVIGATION_DIR}/include/navigation)
+find_path(NAVIGATION_INCLUDE_DIR ddpg_continuous_control.h  
+                                 keyboard.h 
+                                 models.h 
+                                 ornstein_uhlenbeck_process.h
+                                 q_learning.h 
+                                 replay_memory.h ${NAVIGATION_DIR}/include/navigation)
 
 find_library(NAVIGATION_LIBRARIES
     NAMES navigation
