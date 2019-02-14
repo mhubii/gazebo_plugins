@@ -6,6 +6,7 @@
 #include <ignition/math.hh>
 #include <opencv2/opencv.hpp>
 #include <stdio.h>
+#include <fstream>
 #include <vector>
 #include <boost/thread.hpp>
 
@@ -110,6 +111,13 @@ private:
 	float reward_goal_factor_;
 
 	bool randomness_; // add randomnes to the simulation
+	bool track_; // track the path of the vehicle
+
+	// File to track the trajectory.
+	std::ofstream out_file_vehicle_;
+	std::ofstream out_file_others_;
+
+	std::string location_;
 
 	// Node for communication.
 	gazebo::transport::NodePtr node_;
