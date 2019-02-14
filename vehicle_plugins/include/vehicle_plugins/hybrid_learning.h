@@ -94,6 +94,10 @@ private:
 
 	std::vector<physics::JointPtr> joints_;
 
+	// Initial positions.
+	ignition::math::Vector3d obs_pos_;
+	ignition::math::Vector3d goal_pos_;
+
 	// Optimization parameters.
 	uint batch_size_;
 	uint buffer_size_;
@@ -104,6 +108,8 @@ private:
 	float reward_loss_;
 	float cost_step_;
 	float reward_goal_factor_;
+
+	bool randomness_; // add randomnes to the simulation
 
 	// Node for communication.
 	gazebo::transport::NodePtr node_;

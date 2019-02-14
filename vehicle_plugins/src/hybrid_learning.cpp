@@ -16,7 +16,7 @@
 #define BATCH_SIZE 128
 #define BUFFER_SIZE 2560
 #define MAX_EPISODES 100
-#define MAX_STEPS 600
+#define MAXRe_STEPS 600
 
 #define REWARD_WIN  1000
 #define REWARD_LOSS -1000
@@ -39,6 +39,10 @@ VehiclePlugin::VehiclePlugin() :
 		vel_[i] = 0.;
 	}
 
+	// Initial positions.
+	obs_pos_ = ignition::math::Vector3d::Zero;
+	goal_pos_ = ignition::math::Vector3d::Zero;
+
 	// Optimization parameters.
 	batch_size_ = 128;
 	buffer_size_ = 2560;
@@ -49,6 +53,8 @@ VehiclePlugin::VehiclePlugin() :
 	reward_loss_ = -1000.;
 	cost_step_ = 0.01;
 	reward_goal_factor_ = 500.;
+
+	randomness_ = true;
 
 	reload_ = false;
 	n_episodes_ = 0;
@@ -90,6 +96,10 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 	// Store the pointer to the model.
 	this->model_ = parent;
+
+	// Get the initial positions of the goal and the obstacle.
+	obs_pos_ = this->model_->GetWorld()->ModelByName("obstacle")->WorldPose().Pos();
+	goal_pos_ = this->model_->GetWorld()->ModelByName("goal")->WorldPose().Pos();
 
 	// Get model parameters.
 	sdf::ElementPtr model_sdf = this->model_->GetLink("chassis")->GetSDF();
@@ -144,6 +154,8 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 		reward_loss_ = sdf->GetElement("autonomous")->Get<float>("reward_loss");
 		cost_step_ = sdf->GetElement("autonomous")->Get<float>("cost_step");
 		reward_goal_factor_ = sdf->GetElement("autonomous")->Get<float>("reward_goal_factor");
+
+		randomness_ = sdf->GetElement("autonomous")->Get<bool>("randomness");
 
 		if (autonomous_) {
 		
@@ -686,6 +698,20 @@ void VehiclePlugin::ResetEnvironment() {
 
 	model_->Reset();
 	model_->ResetPhysicsStates();
+
+	// Reset goal and obstacle to a random state.
+	if (randomness_) {
+
+		// Set random obstacle position.
+		Eigen::Vector2f obs_rand = UniformCircularRandVar(obs_pos_[0], obs_pos_[1], 1.);
+		ignition::math::Pose3d obs_pose(ignition::math::Vector3d(obs_rand(0), obs_rand(1), 0.), ignition::math::Quaterniond::Identity);
+		this->model_->GetWorld()->ModelByName("obstacle")->SetWorldPose(obs_pose);
+	
+		// Set random goal position.
+		Eigen::Vector2f goal_rand = UniformCircularRandVar(goal_pos_[0], goal_pos_[1], 1.);
+		ignition::math::Pose3d goal_pose(ignition::math::Vector3d(goal_rand(0), goal_rand(1), 0.), ignition::math::Quaterniond::Identity);
+		this->model_->GetWorld()->ModelByName("goal")->SetWorldPose(goal_pose);
+	}
 
 	// Get current goal distance.
 	last_goal_distance_ = GetGoalDistance();
