@@ -55,6 +55,7 @@ VehiclePlugin::VehiclePlugin() :
 	reward_goal_factor_ = 500.;
 
 	randomness_ = true;
+	track_ = false;
 
 	reload_ = false;
 	n_episodes_ = 0;
@@ -89,6 +90,12 @@ VehiclePlugin::~VehiclePlugin() {
 	if (autonomous_) {
 
 		delete brain_;
+	}
+
+	if (track_) {
+
+		out_file_vehicle_.close();	
+		out_file_others_.clear();	
 	}
 }
 
@@ -141,7 +148,7 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 		if (mode.empty()) {
 
-			printf("VehicleHybridLearning-- please provide a mode, either train or test.");
+			printf("VehicleHybridLearning -- please provide a mode, either train or test.");
 		}
 
 		// Optimization parameters.
@@ -160,6 +167,24 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 		if (autonomous_) {
 		
 			printf("VehicleHybridLearning -- successfully initialized reinforcement learning in %s mode. \n", mode.c_str());
+		}
+	}
+
+	if (sdf->HasElement("track")) {
+
+		track_ = sdf->Get<bool>("track");
+
+		location_ = sdf->GetElement("track")->Get<std::string>("location");
+
+		if (track_ && location_.empty()) {
+
+			printf("VehicleHybridLearning -- please provide a location to store the tracked trajectory.");
+			track_ = false;
+		}
+		else if (track_ && !location_.empty()) {
+
+			out_file_vehicle_.open(location_ + "/vehicle_positions.csv");
+			out_file_others_.open(location_ + "/goal_obstacle_positions.csv");
 		}
 	}
 
@@ -208,6 +233,16 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
+	if (track_) {
+
+		// Track the position of the vehicle.
+		ignition::math::Vector3d pos_vehicle = this->model_->GetWorld()->ModelByName("vehicle")->WorldPose().Pos();
+		ignition::math::Vector3d pos_obstacle = this->model_->GetWorld()->ModelByName("obstacle")->WorldPose().Pos();
+		ignition::math::Vector3d pos_goal = this->model_->GetWorld()->ModelByName("goal")->WorldPose().Pos();
+
+		out_file_vehicle_ << pos_vehicle[0]  << ", " << pos_vehicle[1]  << ", " << pos_vehicle[2]  << "\n";
+	}
+
 	if (!MsgToTensor(msg, l_img_next_, r_img_next_)) {
 
 		printf("VehicleHybridLearning -- could not convert message to tensor.\n");
@@ -220,11 +255,11 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 	reward_[0][0] = reward_goal_factor_*goal_distance_reward_ - cost_step_*n_steps_;
 
-	if (goal_distance < 0.05) {
+	if (goal_distance < 0.2) {
 
 		final_state_ = HIT_GOAL;
 	}
-	else if (GetObstacleDistance() < 0.05) {
+	else if (GetObstacleDistance() < 0.2) {
 
 		final_state_ = HIT_OBSTACLE;
 	}
@@ -562,13 +597,13 @@ void VehiclePlugin::ActionToVelocity(torch::Tensor& action, double* vel) {
 		vel[1] = + vel_delta_;
 		vel[2] = 0.;
 	}
-	if (*(action.to(torch::kCPU).data<long>()) == 2) { // Left, action 4
+	if (*(action.to(torch::kCPU).data<long>()) == 4) { // Left, action 4
 				
 		vel[0] = 0.;
 		vel[1] = 0.;
 		vel[2] = - vel_delta_;
 	}
-	if (*(action.to(torch::kCPU).data<long>()) == 3) { // Right, action 5
+	if (*(action.to(torch::kCPU).data<long>()) == 5) { // Right, action 5
 		
 		vel[0] = 0.;
 		vel[1] = 0.;
@@ -671,6 +706,16 @@ void VehiclePlugin::ResetEnvironment() {
 	// Store the target network.
 	//if ()
 
+	if (track_) {
+
+		// Track the position of the goal and the obstacle.
+		ignition::math::Vector3d pos_obstacle = this->model_->GetWorld()->ModelByName("obstacle")->WorldPose().Pos();
+		ignition::math::Vector3d pos_goal = this->model_->GetWorld()->ModelByName("goal")->WorldPose().Pos();
+
+		out_file_others_ << pos_goal[0]     << ", " << pos_goal[1]     << ", " << pos_goal[2]     << ", "
+				         << pos_obstacle[0] << ", " << pos_obstacle[1] << ", " << pos_obstacle[2] << "\n";
+	}
+
 	n_episodes_ += 1;
 	n_steps_ = 0;
 	final_state_ = NONE;
@@ -703,13 +748,13 @@ void VehiclePlugin::ResetEnvironment() {
 	if (randomness_) {
 
 		// Set random obstacle position.
-		Eigen::Vector2f obs_rand = UniformCircularRandVar(obs_pos_[0], obs_pos_[1], 1.);
+		Eigen::Vector2f obs_rand = UniformCircularRandVar(obs_pos_[0], obs_pos_[1], 0.5);
 		ignition::math::Pose3d obs_pose(ignition::math::Vector3d(obs_rand(0), obs_rand(1), 0.), ignition::math::Quaterniond::Identity);
 		this->model_->GetWorld()->ModelByName("obstacle")->SetWorldPose(obs_pose);
 	
 		// Set random goal position.
 		Eigen::Vector2f goal_rand = UniformCircularRandVar(goal_pos_[0], goal_pos_[1], 1.);
-		ignition::math::Pose3d goal_pose(ignition::math::Vector3d(goal_rand(0), goal_rand(1), 0.), ignition::math::Quaterniond::Identity);
+		ignition::math::Pose3d goal_pose(ignition::math::Vector3d(goal_rand(0), goal_rand(1), 0.5), ignition::math::Quaterniond::Identity);
 		this->model_->GetWorld()->ModelByName("goal")->SetWorldPose(goal_pose);
 	}
 
