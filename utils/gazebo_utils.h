@@ -16,9 +16,9 @@ std::mt19937 random_angle(random_device());
 
 // Return a random variable of a uniform circular distribution. The center of the 
 // distribution is (x,y), and the radius is r.
-Eigen::Vector2d UniformCircularRandVar(float x, float y, float r) {
+Eigen::Vector2f UniformCircularRandVar(float x, float y, float r) {
 
-	Eigen::Vector2d rv(0., 0.);
+	Eigen::Vector2f rv(0., 0.);
 
 	// Sample uniformly spherical coordinates.
 	float sph_r = std::uniform_real_distribution<float>(0., r)(random_radius);
