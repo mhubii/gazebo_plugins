@@ -57,6 +57,9 @@ VehiclePlugin::VehiclePlugin() :
 	randomness_ = true;
 	track_ = false;
 
+	new_state_ = true;
+	state_updated_ = false;
+
 	best_loss_ = std::numeric_limits<float>::max()/2.;
 
 	reload_ = false;
@@ -223,6 +226,9 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	// Create a node for server communication.
 	server_pub_ = node_->Advertise<gazebo::msgs::ServerControl>("/gazebo/server/control");
 
+	// Listen to the update event. This event is broadcast every simulation iterartion.
+	this->update_connection_ = event::Events::ConnectWorldUpdateBegin(std::bind(&VehiclePlugin::OnUpdate, this));
+
 	// Get current goal distance.
 	last_goal_distance_ = GetGoalDistance();
 
@@ -235,121 +241,136 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 	}
 }
 
-void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
+void VehiclePlugin::OnUpdate() {
 
-	if (track_) {
+	if (new_state_) { // removed it from OnCameraMsg to this place
 
-		// Track the position of the vehicle.
-		ignition::math::Vector3d pos_vehicle = this->model_->GetWorld()->ModelByName("vehicle")->WorldPose().Pos();
-		ignition::math::Vector3d pos_obstacle = this->model_->GetWorld()->ModelByName("obstacle")->WorldPose().Pos();
-		ignition::math::Vector3d pos_goal = this->model_->GetWorld()->ModelByName("goal")->WorldPose().Pos();
+		state bundle{torch::zeros({l_img_.size(0), l_img_.size(3), l_img_.size(1), l_img_.size(2)}, torch::kFloat32),
+					torch::zeros({r_img_.size(0), r_img_.size(3), r_img_.size(1), r_img_.size(2)}, torch::kFloat32),
+					torch::zeros(action_.sizes(), torch::kLong),
+					torch::zeros(reward_.sizes(), torch::kFloat32),
+					torch::zeros({l_img_next_.size(0), l_img_next_.size(3), l_img_next_.size(1), l_img_next_.size(2)}, torch::kFloat32),
+					torch::zeros({r_img_next_.size(0), r_img_next_.size(3), r_img_next_.size(1), r_img_next_.size(2)}, torch::kFloat32),
+					torch::zeros(dones_.sizes(), torch::kFloat32)};
 
-		out_file_vehicle_ << pos_vehicle[0]  << ", " << pos_vehicle[1]  << ", " << pos_vehicle[2]  << "\n";
-	}
+		std::get<0>(bundle).copy_(l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/);
+		std::get<1>(bundle).copy_(r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/);
+		std::get<2>(bundle).copy_(action_.to(torch::kLong)/*action*/);
+		std::get<3>(bundle).copy_(reward_.to(torch::kFloat32)/*reward*/);
+		std::get<4>(bundle).copy_(l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/);
+		std::get<5>(bundle).copy_(r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/);
+		std::get<6>(bundle).copy_(dones_.to(torch::kFloat32)/*dones*/);
 
-	if (!MsgToTensor(msg, l_img_next_, r_img_next_)) {
+		// Update the agent.
+		brain_->Step(bundle);
 
-		printf("VehicleHybridLearning -- could not convert message to tensor.\n");
-	};
+		// Record the loss.
+		loss_history_.push_back(brain_->GetLoss());
 
-	// Determine the reward.
-	float goal_distance = GetGoalDistance();
-	goal_distance_reward_ = last_goal_distance_ - goal_distance;
-	last_goal_distance_ = goal_distance;
+		if (*(dones_.data<int>()) == 1) {
 
-	reward_[0][0] = reward_goal_factor_*goal_distance_reward_ - cost_step_*n_steps_;
+			ResetEnvironment();
+		}
+		else {
 
-	if (goal_distance < 0.2) {
+			// Perform an action.
+			action_ = brain_->Act(l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), 
+								r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), true);
 
-		final_state_ = HIT_GOAL;
-	}
-	else if (GetObstacleDistance() < 0.2) {
+			ActionToVelocity(action_, vel_);
+			// GetAction(vel_);
 
-		final_state_ = HIT_OBSTACLE;
-	}
+			UpdateJoints(vel_);
 
-	switch (final_state_)
-	{
-		case NONE:
-			dones_[0][0] = 0;
-			break;
+			n_steps_ += 1;
 
-		case MAXIMUM_STEPS:
-			dones_[0][0] = 1;
-			printf("VehicleHybridLearning -- maximum steps reached.\n");
-			break;
+			if (max_steps_ <= n_steps_) {
 
-		case HIT_GOAL:
-			dones_[0][0] = 1;
-			reward_[0][0] += reward_win_;
-			printf("VehicleHybridLearning -- hit goal.\n");
-			break;
+				final_state_ = MAXIMUM_STEPS;
+			}
 
-		case HIT_OBSTACLE:
-			dones_[0][0] = 1;
-			reward_[0][0] += reward_loss_;
-			printf("VehicleHybridLearning -- hit obstacle.\n");
-			break;
-	
-		default:
-			printf("VehicleHybridLearning -- vehicle in unknown state.\n");
-			break;
-	}
-
-	score_ += *(reward_.data<float>());
-
-	// if (n_steps_ % 100 == 0) {
-
-		PrintStatus();
-	// }
-
-	state bundle{torch::zeros({l_img_.size(0), l_img_.size(3), l_img_.size(1), l_img_.size(2)}, torch::kFloat32),
-				 torch::zeros({r_img_.size(0), r_img_.size(3), r_img_.size(1), r_img_.size(2)}, torch::kFloat32),
-				 torch::zeros(action_.sizes(), torch::kLong),
-				 torch::zeros(reward_.sizes(), torch::kFloat32),
-				 torch::zeros({l_img_next_.size(0), l_img_next_.size(3), l_img_next_.size(1), l_img_next_.size(2)}, torch::kFloat32),
-				 torch::zeros({r_img_next_.size(0), r_img_next_.size(3), r_img_next_.size(1), r_img_next_.size(2)}, torch::kFloat32),
-				 torch::zeros(dones_.sizes(), torch::kFloat32)};
-
-	std::get<0>(bundle).copy_(l_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/);
-	std::get<1>(bundle).copy_(r_img_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*init*/);
-	std::get<2>(bundle).copy_(action_.to(torch::kLong)/*action*/);
-	std::get<3>(bundle).copy_(reward_.to(torch::kFloat32)/*reward*/);
-	std::get<4>(bundle).copy_(l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/);
-	std::get<5>(bundle).copy_(r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3)/*next*/);
-	std::get<6>(bundle).copy_(dones_.to(torch::kFloat32)/*dones*/);
-
-	// Update the agent.
-	brain_->Step(bundle);
-
-	// Record the loss.
-	loss_history_.push_back(brain_->GetLoss());
-
-	if (*(dones_.data<int>()) == 1) {
-
-		ResetEnvironment();
-	}
-	else {
-
-		// Perform an action.
-		action_ = brain_->Act(l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), 
-							  r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), true);
-
-		ActionToVelocity(action_, vel_);
-		// GetAction(vel_);
-
-		UpdateJoints(vel_);
-
-		n_steps_ += 1;
-
-		if (max_steps_ <= n_steps_) {
-
-			final_state_ = MAXIMUM_STEPS;
+			// Save next image as current image.
+			l_img_ = l_img_next_;
+			r_img_ = r_img_next_;
 		}
 
-		// Save next image as current image.
-		l_img_ = l_img_next_;
-		r_img_ = r_img_next_;
+		new_state_ = false;
+		state_updated_ = true;
+	}
+}
+
+void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
+
+	if (state_updated_) {
+
+		if (track_) {
+
+			// Track the position of the vehicle.
+			ignition::math::Vector3d pos_vehicle = this->model_->GetWorld()->ModelByName("vehicle")->WorldPose().Pos();
+			ignition::math::Vector3d pos_obstacle = this->model_->GetWorld()->ModelByName("obstacle")->WorldPose().Pos();
+			ignition::math::Vector3d pos_goal = this->model_->GetWorld()->ModelByName("goal")->WorldPose().Pos();
+
+			out_file_vehicle_ << pos_vehicle[0]  << ", " << pos_vehicle[1]  << ", " << pos_vehicle[2]  << "\n";
+		}
+
+		if (!MsgToTensor(msg, l_img_next_, r_img_next_)) {
+
+			printf("VehicleHybridLearning -- could not convert message to tensor.\n");
+		};
+
+		// Determine the reward.
+		float goal_distance = GetGoalDistance();
+		goal_distance_reward_ = last_goal_distance_ - goal_distance;
+		last_goal_distance_ = goal_distance;
+
+		reward_[0][0] = reward_goal_factor_*goal_distance_reward_ - cost_step_*n_steps_;
+
+		if (goal_distance < 0.8) {
+
+			final_state_ = HIT_GOAL;
+		}
+		else if (GetObstacleDistance() < 0.6) {
+
+			final_state_ = HIT_OBSTACLE;
+		}
+
+		switch (final_state_)
+		{
+			case NONE:
+				dones_[0][0] = 0;
+				break;
+
+			case MAXIMUM_STEPS:
+				dones_[0][0] = 1;
+				printf("VehicleHybridLearning -- maximum steps reached.\n");
+				break;
+
+			case HIT_GOAL:
+				dones_[0][0] = 1;
+				reward_[0][0] += reward_win_;
+				printf("VehicleHybridLearning -- hit goal.\n");
+				break;
+
+			case HIT_OBSTACLE:
+				dones_[0][0] = 1;
+				reward_[0][0] += reward_loss_;
+				printf("VehicleHybridLearning -- hit obstacle.\n");
+				break;
+		
+			default:
+				printf("VehicleHybridLearning -- vehicle in unknown state.\n");
+				break;
+		}
+
+		score_ += *(reward_.data<float>());
+
+		// if (n_steps_ % 100 == 0) {
+
+			PrintStatus();
+		// }
+
+		state_updated_ = false;
+		new_state_ = true;
 	}
 }
 
@@ -378,7 +399,8 @@ float VehiclePlugin::GetGoalDistance() {
 	ignition::math::Box goal_box = goal->BoundingBox();
 	ignition::math::Box vehicle_box = this->model_->BoundingBox();
 
-	return BoxDistance(vehicle_box, goal_box);
+	return CenterDistance(vehicle_box, goal_box);
+	//return BoxDistance(vehicle_box, goal_box);
 }
 
 float VehiclePlugin::GetObstacleDistance() {
@@ -389,7 +411,8 @@ float VehiclePlugin::GetObstacleDistance() {
 	ignition::math::Box obstacle_box = obstacle->BoundingBox();
 	ignition::math::Box vehicle_box = this->model_->BoundingBox();
 
-	return BoxDistance(vehicle_box, obstacle_box);
+	return CenterDistance(vehicle_box, obstacle_box);
+	//return BoxDistance(vehicle_box, obstacle_box);
 }
 
 void VehiclePlugin::PrintStatus() {
@@ -760,6 +783,8 @@ void VehiclePlugin::ResetEnvironment() {
 
 		vel_[i] = 0.;
 	}
+
+	UpdateJoints(vel_);
 
 	model_->Reset();
 	model_->ResetPhysicsStates();

@@ -91,7 +91,7 @@ private:
 
 	ignition::math::Pose3d init_pose_;
 
-	event::ConnectionPtr update_connection;	
+	event::ConnectionPtr update_connection_;	
 
 	std::vector<physics::JointPtr> joints_;
 
@@ -112,6 +112,9 @@ private:
 
 	bool randomness_; // add randomnes to the simulation
 	bool track_; // track the path of the vehicle
+
+	bool new_state_;
+	bool state_updated_;
 
 	// File to track the trajectory.
 	std::ofstream out_file_vehicle_;
