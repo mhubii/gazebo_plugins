@@ -112,6 +112,8 @@ private:
 
 	bool randomness_; // add randomnes to the simulation
 	bool track_; // track the path of the vehicle
+	bool prior_; // load initial network
+	bool train_; // train or test
 
 	bool new_state_;
 	bool state_updated_;
@@ -127,6 +129,7 @@ private:
 	std::vector<float> loss_history_;
 
 	float best_loss_;
+	float best_score_;
 
 	// Node for communication.
 	gazebo::transport::NodePtr node_;

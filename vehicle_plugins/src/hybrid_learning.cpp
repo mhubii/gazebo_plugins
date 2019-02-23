@@ -11,7 +11,7 @@
 
 #define VELOCITY_MIN -5.0f
 #define VELOCITY_MAX  5.0f
-#define N_ACTIONS 6
+#define N_ACTIONS 4
 
 #define BATCH_SIZE 128
 #define BUFFER_SIZE 2560
@@ -56,11 +56,14 @@ VehiclePlugin::VehiclePlugin() :
 
 	randomness_ = true;
 	track_ = false;
+	prior_ = false;
+	train_ = true;
 
 	new_state_ = true;
 	state_updated_ = false;
 
 	best_loss_ = std::numeric_limits<float>::max()/2.;
+	best_score_ = 0.;
 
 	reload_ = false;
 	n_episodes_ = 0;
@@ -154,7 +157,17 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 		if (mode.empty()) {
 
-			printf("VehicleHybridLearning -- please provide a mode, either train or test.");
+			printf("VehicleHybridLearning -- please provide a mode, either train or test.\n");
+		}
+		else if (!std::strcmp(mode.c_str(), "test")) {
+
+			printf("VehicleHybridLearning -- running in test mode.\n");
+			train_ = false;
+		}
+		else if (!std::strcmp(mode.c_str(), "train")) {
+
+			printf("VehicleHybridLearning -- running in train mode.\n");
+			train_ = true;
 		}
 
 		// Optimization parameters.
@@ -191,7 +204,7 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 			out_file_vehicle_.open(location_ + "/vehicle_positions.csv");
 			out_file_others_.open(location_ + "/goal_obstacle_positions.csv");
-			out_file_loss_.open(location_ + "/mean_loss.csv");
+			out_file_loss_.open(location_ + "/mean_loss_score.csv");
 		}
 	}
 
@@ -215,6 +228,27 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 		printf("VehicleHybridLearning -- creating autonomous agent...\n");
 		brain_ = new QLearning(3, height, width, N_ACTIONS, batch_size_, buffer_size_, torch::kCUDA);
 		printf("VehicleHybridLearning -- successfully initialized agent.\n");
+	}
+
+	if (sdf->HasElement("prior")) {
+
+		// Load a prior policy.
+		prior_ = sdf->Get<bool>("prior");
+
+		std::string location = sdf->GetElement("prior")->Get<std::string>("location");
+
+		if (prior_ && location.empty()) {
+
+			printf("VehicleHybridLearning -- please provide a location with initial network parameters.\n");
+			prior_ = false;
+		}
+		else if (prior_ && !location.empty()) {
+
+			printf("VehicleHybridLearning -- setting prior network parameters.\n");
+			DQN tmp(3, height, width, N_ACTIONS);
+			torch::load(tmp, location + "/net.pt");
+			brain_->SetPolicy(tmp);
+		}
 	}
 
 	// Node for communication.
@@ -275,7 +309,9 @@ void VehiclePlugin::OnUpdate() {
 
 			// Perform an action.
 			action_ = brain_->Act(l_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), 
-								r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), true);
+								r_img_next_.to(torch::kFloat32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3), train_);
+			// action_ = brain_->Act(l_img_next_.to(torch::kFloat32).transpose(1, 3).transpose(2, 3) - l_img_.to(torch::kFloat32).transpose(1, 3).transpose(2, 3), 
+			// 					  r_img_next_.to(torch::kFloat32).transpose(1, 3).transpose(2, 3) - r_img_.to(torch::kFloat32).transpose(1, 3).transpose(2, 3), train_);
 
 			ActionToVelocity(action_, vel_);
 			// GetAction(vel_);
@@ -325,11 +361,11 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 
 		reward_[0][0] = reward_goal_factor_*goal_distance_reward_ - cost_step_*n_steps_;
 
-		if (goal_distance < 0.8) {
+		if (goal_distance < 0.9) {
 
 			final_state_ = HIT_GOAL;
 		}
-		else if (GetObstacleDistance() < 0.6) {
+		else if (GetObstacleDistance() < 0.55) {
 
 			final_state_ = HIT_OBSTACLE;
 		}
@@ -628,18 +664,18 @@ void VehiclePlugin::ActionToVelocity(torch::Tensor& action, double* vel) {
 		vel[1] = + vel_delta_;
 		vel[2] = 0.;
 	}
-	if (*(action.to(torch::kCPU).data<long>()) == 4) { // Left, action 4
+	// if (*(action.to(torch::kCPU).data<long>()) == 4) { // Left, action 4
 				
-		vel[0] = 0.;
-		vel[1] = 0.;
-		vel[2] = - vel_delta_;
-	}
-	if (*(action.to(torch::kCPU).data<long>()) == 5) { // Right, action 5
+	// 	vel[0] = 0.;
+	// 	vel[1] = 0.;
+	// 	vel[2] = - vel_delta_;
+	// }
+	// if (*(action.to(torch::kCPU).data<long>()) == 5) { // Right, action 5
 		
-		vel[0] = 0.;
-		vel[1] = 0.;
-		vel[2] = + vel_delta_;
-	}
+	// 	vel[0] = 0.;
+	// 	vel[1] = 0.;
+	// 	vel[2] = + vel_delta_;
+	// }
 	// if (*(action.to(torch::kCPU).data<long>()) == 5) { // E, action 6
 		
 	// 	for (int i = 0; i < DOF; i++) {
@@ -736,6 +772,7 @@ void VehiclePlugin::ResetEnvironment() {
 
 	// Analyze the mean loss of this episode.
 	float mean_loss = std::accumulate(loss_history_.begin(), loss_history_.end(), 0.)/loss_history_.size();
+	float mean_score = score_/n_steps_;
 
 	if (track_) {
 
@@ -747,13 +784,13 @@ void VehiclePlugin::ResetEnvironment() {
 				         << pos_obstacle[0] << ", " << pos_obstacle[1] << ", " << pos_obstacle[2] << "\n";
 
 		// Track the mean loss.
-		out_file_loss_ << n_episodes_ << ", " << mean_loss << "\n";
+		out_file_loss_ << n_episodes_ << ", " << mean_loss << ", " << mean_score << "\n";
 
 		// Save neural net on best mean loss.
-		if (mean_loss < best_loss_) {
+		if (mean_score > best_score_) {
 
 			torch::save(brain_->GetTarget(), location_ + "/net.pt");
-			best_loss_ = mean_loss;
+			best_score_ = mean_score;
 		}
 	}
 
