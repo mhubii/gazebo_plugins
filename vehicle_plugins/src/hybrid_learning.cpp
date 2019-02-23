@@ -59,6 +59,9 @@ VehiclePlugin::VehiclePlugin() :
 	prior_ = false;
 	train_ = true;
 
+	start_time_ = 0.;
+	end_time_ = 0.;
+
 	new_state_ = true;
 	state_updated_ = false;
 
@@ -273,6 +276,8 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 		printf("VehicleHybridLearning -- no keyboard for manual control, shutting down.\n");
 		Shutdown();
 	}
+
+	start_time_ = time_.Float();
 }
 
 void VehiclePlugin::OnUpdate() {
@@ -783,8 +788,12 @@ void VehiclePlugin::ResetEnvironment() {
 		out_file_others_ << pos_goal[0]     << ", " << pos_goal[1]     << ", " << pos_goal[2]     << ", "
 				         << pos_obstacle[0] << ", " << pos_obstacle[1] << ", " << pos_obstacle[2] << "\n";
 
-		// Track the mean loss.
-		out_file_loss_ << n_episodes_ << ", " << mean_loss << ", " << mean_score << "\n";
+		end_time_ = time_.Float();
+
+		// Track the mean loss and more.
+		out_file_loss_ << n_episodes_ << ", " << mean_loss << ", " << mean_score << ", " << final_state_ << ", " << (end_time_ - start_time_) << "\n";
+
+		start_time_ = end_time_;
 
 		// Save neural net on best mean loss.
 		if (mean_score > best_score_) {

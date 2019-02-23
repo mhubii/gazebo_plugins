@@ -3,6 +3,7 @@
 
 #include <gazebo/gazebo.hh>
 #include <gazebo/physics/physics.hh>
+#include <gazebo/common/common.hh>
 #include <ignition/math.hh>
 #include <opencv2/opencv.hpp>
 #include <stdio.h>
@@ -114,6 +115,9 @@ private:
 	bool track_; // track the path of the vehicle
 	bool prior_; // load initial network
 	bool train_; // train or test
+	gazebo::common::Time time_; // track the time
+	float start_time_;
+	float end_time_;
 
 	bool new_state_;
 	bool state_updated_;
