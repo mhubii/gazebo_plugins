@@ -22,6 +22,9 @@ if (${BUILD_WITH_TORCH})
   add_library(gazeboVehicleHybridLearning SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/hybrid_learning.cpp)
   target_link_libraries(gazeboVehicleHybridLearning ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})
 
+  add_library(gazeboVehiclePPOLearning SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/ppo_learning.cpp)
+  target_link_libraries(gazeboVehiclePPOLearning ${GAZEBO_LIBRARIES} ${TORCH_LIBRARIES} ${NAVIGATION_LIBRARIES})
+
 else ()
 
   add_library(gazeboVehicleManualControl SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/manual_control.cpp)
