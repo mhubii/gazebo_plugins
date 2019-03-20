@@ -200,10 +200,10 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			return;
 		}
 
-		const int l_width = msg->image()[0].width();
-		const int l_height = msg->image()[0].height();
-		const int l_size = msg->image()[0].data().size();
-		const int l_bpp = (msg->image()[0].step()/msg->image()[0].width())*8; // Bits per pixel.
+		const int l_width = msg->image().Get(0).width();
+		const int l_height = msg->image().Get(0).height();
+		const int l_size = msg->image().Get(0).data().size();
+		const int l_bpp = (msg->image().Get(0).step()/msg->image().Get(0).width())*8; // Bits per pixel.
 
 		if (l_bpp != 24) {
 
@@ -216,10 +216,10 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			l_img_.resize_({1, l_height, l_width, 3});
 		}
 
-		const int r_width = msg->image()[1].width();
-		const int r_height = msg->image()[1].height();
-		const int r_size = msg->image()[1].data().size();
-		const int r_bpp = (msg->image()[1].step()/msg->image()[0].width())*8; // Bits per pixel.
+		const int r_width = msg->image().Get(1).width();
+		const int r_height = msg->image().Get(1).height();
+		const int r_size = msg->image().Get(1).data().size();
+		const int r_bpp = (msg->image().Get(1).step()/msg->image().Get(0).width())*8; // Bits per pixel.
 
 		if (r_bpp != 24) {
 
@@ -233,8 +233,8 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 		}
 
 		// Copy image to tensor.
-		std::memcpy(l_img_.data_ptr(), msg->image()[0].data().c_str(), l_size);
-		std::memcpy(r_img_.data_ptr(), msg->image()[1].data().c_str(), r_size);
+		std::memcpy(l_img_.data_ptr(), msg->image().Get(0).data().c_str(), l_size);
+		std::memcpy(r_img_.data_ptr(), msg->image().Get(1).data().c_str(), r_size);
 
 		new_state_ = true;
 	}
