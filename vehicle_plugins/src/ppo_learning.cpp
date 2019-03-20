@@ -9,9 +9,9 @@
 #define R_BACK_PITCH "vehicle::r_back_wheel_pitch"
 #define R_BACK_ROLL "vehicle::r_back_wheel_roll"
 
-#define VELOCITY_MIN -5.0f
-#define VELOCITY_MAX  5.0f
-#define N_ACTIONS 4
+#define VELOCITY_MIN -1.0f
+#define VELOCITY_MAX  1.0f
+#define N_ACTIONS 2
 
 #define BATCH_SIZE 128
 #define BUFFER_SIZE 2560
@@ -49,6 +49,10 @@ VehiclePlugin::VehiclePlugin() :
 	ppo_epochs_ = 8;       
 	max_episodes_ = 100;
 	max_steps_ = 600;
+	beta_ = 1e-4;
+
+	mean_score_ = 0.;
+	best_score_ = 0.;
 
 	reward_win_ = 1000.;
 	reward_loss_ = -1000.;
@@ -105,6 +109,7 @@ VehiclePlugin::~VehiclePlugin() {
 
 		out_file_vehicle_.close();	
 		out_file_others_.close();	
+		out_file_reward_.close();
 	}
 }
 
@@ -179,6 +184,16 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 		printf("VehiclePPOLearning -- successfully initialized reinforcement learning in %s mode. \n", mode.c_str());
 	}
 
+	left_states_.reserve(ppo_steps_);
+	right_states_.reserve(ppo_steps_);
+	actions_.reserve(ppo_steps_);
+	rewards_.reserve(ppo_steps_);
+	dones_.reserve(ppo_steps_);
+
+	log_probs_.reserve(ppo_steps_);
+	returns_.reserve(ppo_steps_);
+	values_.reserve(ppo_steps_);
+
 	if (sdf->HasElement("track")) {
 
 		track_ = sdf->Get<bool>("track");
@@ -194,6 +209,7 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 			out_file_vehicle_.open(location_ + "/vehicle_positions.csv");
 			out_file_others_.open(location_ + "/goal_obstacle_positions.csv");
+			out_file_reward_.open(location_ + "/rewards.csv");
 		}
 	}
 
@@ -213,11 +229,11 @@ void VehiclePlugin::Load(physics::ModelPtr parent, sdf::ElementPtr sdf) {
 
 	// Create da brain.
 	printf("VehiclePPOLearning -- creating autonomous agent...\n");
-	ac_ = ActorCritic(3, height_, width_, N_ACTIONS, 1e-2); // TODO to cuda?
-	ac_->normal(0., 1e-2);
+	ac_ = ActorCritic(3, height_, width_, N_ACTIONS, 0.1, 1e-1); // TODO to cuda?
+	ac_->normal(0., 1e-1);
 	ac_->to(torch::kF32);
 	ac_->to(torch::kCUDA);
-	opt_ = new torch::optim::Adam(ac_->parameters(), torch::optim::AdamOptions(1e-3));
+	opt_ = new torch::optim::Adagrad(ac_->parameters(), torch::optim::AdagradOptions(1e-2));
 	printf("VehiclePPOLearning -- successfully initialized agent.\n");
 
 	if (sdf->HasElement("prior")) {
@@ -275,7 +291,11 @@ void VehiclePlugin::OnUpdate() {
 		last_action_ = std::get<0>(av).to(torch::kCPU);
 		last_value_ = std::get<1>(av).to(torch::kCPU);
 
-		UpdateJoints(last_action_);
+		vel_[0] = *(last_action_.data<float>());
+		vel_[1] = *(last_action_.data<float>());
+		vel_[2] = *(last_action_.data<float>()+1)*0.5;
+
+		UpdateJoints(vel_);
 
 		n_steps_ += 1;
 
@@ -344,6 +364,19 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 				printf("VehiclePPOLearning -- pausing the world while updating ppo.\n");
 				gazebo::physics::pause_world(this->model_->GetWorld(), true);
 
+				// Track rewards.
+				if (track_) {
+					mean_score_ = torch::cat(rewards_).mean().item<float>();
+
+					if (mean_score_ > best_score_) {
+						printf("VehiclePPOLearning -- new best score: %f.\n", mean_score_);
+						torch::save(ac_, location_ + "/best_model.pt");
+						best_score_ = mean_score_;
+					}
+
+					out_file_reward_ << n_episodes_ << ", " <<  mean_score_ << "\n";
+				}
+
 				values_.push_back(std::get<1>(ac_->forward(last_left_state_.to(torch::kF32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3).to(torch::kCUDA), 
 														   last_right_state_.to(torch::kF32).div(127.5).sub(1.).transpose(1, 3).transpose(2, 3).to(torch::kCUDA))).to(torch::kCPU));
 
@@ -357,7 +390,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 				torch::Tensor t_actions = torch::cat(actions_).to(torch::kCUDA);
 				torch::Tensor t_advantages = t_returns - t_values.slice(0, 0, ppo_steps_);
 
-				PPO::update(ac_, t_left_states, t_right_states, t_actions, t_log_probs, t_returns, t_advantages, *opt_, ppo_steps_, ppo_epochs_, mini_batch_size_);
+				PPO::update(ac_, t_left_states, t_right_states, t_actions, t_log_probs, t_returns, t_advantages, *opt_, ppo_steps_, ppo_epochs_, mini_batch_size_, beta_);
 
 				c_ = 0;
 
@@ -428,7 +461,8 @@ void VehiclePlugin::PrintStatus() {
 	// Prints the current status to the command line.
 	std::cout << "episode: "       << n_episodes_
 			  << "    step: "      << n_steps_ 
-			  << "    action: "    << *(actions_[c_].data<float>())
+			  << "    memory: "    << c_
+			  << "    vel: ("      << vel_[0] << ", " << vel_[1] << ", " << vel_[2] << ")"
 			  << "    dones: "     << *(dones_[c_].data<float>())
 			  << "    reward: "    << *(rewards_[c_].data<float>()) << std::endl;
 }
@@ -451,6 +485,8 @@ bool VehiclePlugin::ConfigureJoints(const char* name) {
 	printf("VehiclePPOLearning -- failed to find joint '%s'\n", name);
 	return false;
 }
+
+// TODO check memory management
 
 bool VehiclePlugin::MsgToTensor(ConstImagesStampedPtr& msg, torch::Tensor& l_img, torch::Tensor& r_img) {
 
@@ -542,14 +578,14 @@ auto VehiclePlugin::Reward() -> std::tuple<torch::Tensor, torch::Tensor> {
 	return std::make_tuple(reward, done);
 }
 
-void VehiclePlugin::UpdateJoints(torch::Tensor& vel) {
+void VehiclePlugin::UpdateJoints(double* vel) {
 
 	// Perform an action, given the new velocity.
 	// Drive forward/backward and turn.
-	joints_[0]->SetVelocity(0, *(vel.data<float>())); // left
-	joints_[1]->SetVelocity(0, *(vel.data<float>()+1)); // right
-	joints_[2]->SetVelocity(0, *(vel.data<float>())); // left
-	joints_[3]->SetVelocity(0, *(vel.data<float>()+1)); // right
+	joints_[0]->SetVelocity(0, vel[0]);   // left
+	joints_[1]->SetVelocity(0, vel[1]); // right
+	joints_[2]->SetVelocity(0, vel[0]);   // left
+	joints_[3]->SetVelocity(0, vel[1]); // right
 
 	// Drive left/right. Rotate to frames.
 	ignition::math::Vector3<double> axis = axis.UnitX;
@@ -558,22 +594,22 @@ void VehiclePlugin::UpdateJoints(torch::Tensor& vel) {
 	ignition::math::Quaterniond ori = joints_[0]->AxisFrameOffset(0);
 	tmp = ori.RotateVector(axis);
 	joints_[4]->SetAxis(0, tmp);
-	joints_[4]->SetVelocity(0, *(vel.data<float>()+2));
+	joints_[4]->SetVelocity(0, vel[2]);
 
 	ori = joints_[1]->AxisFrameOffset(0);		
 	tmp = ori.RotateVector(axis);
 	joints_[5]->SetAxis(0, tmp);
-	joints_[5]->SetVelocity(0, *(vel.data<float>()+2));
+	joints_[5]->SetVelocity(0, vel[2]);
 
 	ori = joints_[2]->AxisFrameOffset(0);
 	tmp = ori.RotateVector(axis);
 	joints_[6]->SetAxis(0, tmp);
-	joints_[6]->SetVelocity(0, *(vel.data<float>()+2));
+	joints_[6]->SetVelocity(0, vel[2]);
 
 	ori = joints_[3]->AxisFrameOffset(0);
 	tmp = ori.RotateVector(axis);
 	joints_[7]->SetAxis(0, tmp);
-	joints_[7]->SetVelocity(0, *(vel.data<float>()+2));
+	joints_[7]->SetVelocity(0, vel[2]);
 }
 
 void VehiclePlugin::ResetEnvironment() {
@@ -590,13 +626,6 @@ void VehiclePlugin::ResetEnvironment() {
 		end_time_ = time_.Float();
 
 		start_time_ = end_time_;
-
-		// // Save neural net on best mean loss.
-		// if (mean_score > best_score_) {
-
-		// 	torch::save(ac_, location_ + "/net.pt");
-		// 	best_score_ = mean_score;
-		// }
 	}
 
 	reset_ = false;
@@ -624,8 +653,7 @@ void VehiclePlugin::ResetEnvironment() {
 		vel_[i] = 0.;
 	}
 
-	torch::Tensor vel = torch::zeros({1,3}, torch::kF32);
-	UpdateJoints(vel);
+	UpdateJoints(vel_);
 
 	model_->Reset();
 	model_->ResetPhysicsStates();
