@@ -76,7 +76,7 @@ private:
 	auto Reward() -> std::tuple<torch::Tensor /*reward*/, torch::Tensor /*done*/>;
 
 	// Update the joints, given the action.
-	void UpdateJoints(torch::Tensor& vel);
+	void UpdateJoints(double* vel);
 
 	// Reset environment on final state.
 	void ResetEnvironment();
@@ -95,11 +95,15 @@ private:
 	ignition::math::Vector3d goal_pos_;
 
 	// Optimization parameters.
-	uint ppo_steps_;          // number of steps until ppo update
+	uint ppo_steps_;        // number of steps until ppo update
 	uint mini_batch_size_;  // mini batches for ppo
 	uint ppo_epochs_;       // number of epochs for proximal policy optimization
 	uint max_episodes_;     // number of episodes until simulation is shutdown
 	uint max_steps_;        // number of steps before simulation is reset
+	double beta_;           // exploration factor
+
+	float mean_score_;
+	float best_score_;
 
 	float reward_win_;
 	float reward_loss_;
@@ -122,7 +126,7 @@ private:
 	// File to track the trajectory.
 	std::ofstream out_file_vehicle_;
 	std::ofstream out_file_others_;
-	std::ofstream out_file_loss_;
+	std::ofstream out_file_reward_;
 
 	std::string location_;
 
@@ -137,7 +141,7 @@ private:
 
 	// Autonomous control.
 	ActorCritic ac_;
-	torch::optim::Adam* opt_;
+	torch::optim::Optimizer* opt_;
 
 	final_state final_state_;
 
