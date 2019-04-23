@@ -192,7 +192,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 		return;
 	}
 
-	const int l_bpp = (msg->image()[0].step()/msg->image()[0].width())*8; // Bits per pixel.
+	const int l_bpp = (msg->image().Get(0).step()/msg->image().Get(0).width())*8; // Bits per pixel.
 
 	if (l_bpp != 24) {
 
@@ -200,7 +200,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 		return;
 	}
 
-	const int r_bpp = (msg->image()[1].step()/msg->image()[0].width())*8; // Bits per pixel.
+	const int r_bpp = (msg->image().Get(1).step()/msg->image().Get(0).width())*8; // Bits per pixel.
 
 	if (r_bpp != 24) {
 
@@ -216,11 +216,11 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 	if (record_) {
 
 		std::ofstream binary(img_location_ + "/left/img" + ss.str() + ".raw", std::ios::out | std::ios::binary);
-		binary.write((char*)msg->image()[0].data().c_str(), msg->image()[0].data().length());
+		binary.write((char*)msg->image().Get(0).data().c_str(), msg->image().Get(0).data().length());
 		binary.close();
 
 		binary.open(img_location_ + "/right/img" + ss.str() + ".raw", std::ios::out | std::ios::binary);
-		binary.write((char*)msg->image()[1].data().c_str(), msg->image()[1].data().length());
+		binary.write((char*)msg->image().Get(1).data().c_str(), msg->image().Get(1).data().length());
 		binary.close();
 
 		std::ofstream txt(txt_location_ + "/log.txt", std::ios_base::app);

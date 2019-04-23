@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.11 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 
 set(NAVIGATION_DIR $ENV{HOME}/navigation CACHE STRING "Directory of navigation.")
 
