@@ -709,7 +709,7 @@ bool VehiclePlugin::MsgToTensor(ConstImagesStampedPtr& msg, torch::Tensor& l_img
 		return false;
 	}
 
-	if (l_img.sizes() != torch::IntList({1, l_height, l_width, 3})) {
+	if (l_img.sizes() != torch::IntArrayRef({1, l_height, l_width, 3})) {
 
 		printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
 		l_img.resize_({1, l_height, l_width, 3});
@@ -726,7 +726,7 @@ bool VehiclePlugin::MsgToTensor(ConstImagesStampedPtr& msg, torch::Tensor& l_img
 		return false;
 	}
 
-	if (r_img.sizes() != torch::IntList({1, r_height, r_width, 3})) {
+	if (r_img.sizes() != torch::IntArrayRef({1, r_height, r_width, 3})) {
 
 		printf("VehicleAReinforcementLearning -- resizing tensor to %ix%ix%ix%i", 1, l_height, l_width, 3);
 		r_img.resize_({1, r_height, r_width, 3});

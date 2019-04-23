@@ -23,7 +23,7 @@ namespace gazebo
 VehiclePlugin::VehiclePlugin() :
 	ModelPlugin(), node_(new gazebo::transport::Node()) {
 
-	vel_delta_ = 1e-3;
+	vel_delta_ = 1.;
 
 	reload_ = false;
 
@@ -211,7 +211,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			return;
 		}
 
-		if (l_img_.sizes() != torch::IntList({1, l_height, l_width, 3})) {
+		if (l_img_.sizes() != torch::IntArrayRef({1, l_height, l_width, 3})) {
 
 			l_img_.resize_({1, l_height, l_width, 3});
 		}
@@ -227,7 +227,7 @@ void VehiclePlugin::OnCameraMsg(ConstImagesStampedPtr &msg) {
 			return;
 		}
 
-		if (r_img_.sizes() != torch::IntList({1, r_height, r_width, 3})) {
+		if (r_img_.sizes() != torch::IntArrayRef({1, r_height, r_width, 3})) {
 
 			r_img_.resize_({1, r_height, r_width, 3});
 		}
