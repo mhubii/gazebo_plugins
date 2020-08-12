@@ -20,12 +20,21 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 option(BUILD_VEHICLE_PLUGINS "Build plugins for vehicle." OFF)
 option(BUILD_WITH_TORCH "Whether to build with Torch." OFF)
 option(BUILD_WITH_ORB_SLAM2 "Whether to build with ORB SLAM2." OFF)
+option(BUILD_SPAWNING_PLUGINS "Build plugins for spawning." OFF)
 
 if (${BUILD_VEHICLE_PLUGINS})
 
 	message(STATUS "Building vehicle plugins.")
 
 	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vehicle_plugins)
+
+endif ()
+
+if (${BUILD_SPAWNING_PLUGINS})
+
+	message(STATUS "Building spawning plugins.")
+
+	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/spawning_plugins)
 
 endif ()
 
