@@ -15,10 +15,17 @@ namespace gazebo {
 
                 _init_pose = this->_model->WorldPose();
                 _init_time = common::Time::GetWallTime().Double();
+
+                if (_sdf->HasElement("timescaling")) {
+                    _time_scaling = _sdf->GetElement("timescaling")->Get<double>("value");
+                }
+                else {
+                    _time_scaling = 1.;
+                }
             }
 
             void onUpdate() {
-                double time = common::Time::GetWallTime().Double() - _init_time;
+                double time = _time_scaling*(common::Time::GetWallTime().Double() - _init_time);
                 ignition::math::Pose3d pose;
                 pose = _init_pose;
                 double scale = 2/(3 - std::cos(2*time)); // https://gamedev.stackexchange.com/questions/43691/how-can-i-move-an-object-in-an-infinity-or-figure-8-trajectory
@@ -33,6 +40,7 @@ namespace gazebo {
 
             ignition::math::Pose3d _init_pose;
             double _init_time;
+            double _time_scaling;
     };
 
     GZ_REGISTER_MODEL_PLUGIN(InfinitySpawn)
